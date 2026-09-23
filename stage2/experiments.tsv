@@ -31,13 +31,13 @@ R4d_d3_c1728_ri120	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 500
 # +0.07*(0.5-0.5/s) [Type I fired] +0.07*0.5 [Type II] -0.34/s [forget] = ~-0.005 at s=5: zero drift,
 # no restoring force; depth 3's transient tips it to empty and senders die. s=3/5/10 -> layer-0
 # literals 1.0/1.4/3.3 and acc@10 0.278/0.281/0.285, as predicted. Fix: per-layer s (layer 0 high).
-R4e_d3_c1728_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
-R4f_d2_s10_maxinc4096	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
-R4g_d3_c1728_ri64_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096 @ri=64
 R5a_d3_c1728_s10.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 10,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
 R5b_d3_c1728_s20.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 20,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
 R5c_d2_c2880_s20.5	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 20,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
 R5d_d2_c2880_s20.10	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 20,10 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+R4e_d3_c1728_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+R4f_d2_s10_maxinc4096	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+R4g_d3_c1728_ri64_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096 @ri=64
 R3c_d2_ms1024_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 2 --msg-size 1024 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3d_d2_ms512_mb1_d12_s10	GTM_DISTS=1,2	--clauses 2880 --s 10.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3e_flat8_oracle_c1000	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-8:-7:-6:-5:-4:-3:-2:-1:1:2:3:4:5:6:7:8	--clauses 1000 --s 5.0 --depth 1 --T 50000 --q -1 --rho 0.0078
