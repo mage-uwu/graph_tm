@@ -10,6 +10,14 @@ R2a_d2_ms512_mb1_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 
 R2b_d2_ms512_mb1_d12	GTM_DISTS=1,2	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
 R2c_d2_ms512_mb1_d124_me	GTM_DISTS=1,2,4;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
 R2d_d2_ms256_mb2_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 256 --msg-bits 2 --senders pos --q -1 --rho 0.0078
-# round 1 leftovers (lower priority)
+# Round 3: R2b (depth 2, msg 512, 1 bit/sender, +-1/2, normal MASK) reached 0.281 acc@10 at 2M = 91% of the
+# flat oracle; empty MASK kills senders (context clauses lose positive literals). Now: longer context
+# (+-4 edges; 2 hops at matched params), larger messages at matched params, s, and a +-8 flat oracle.
+R3a_d2_ms512_mb1_d124	GTM_DISTS=1,2,4	--clauses 2880 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+R3b_d3_ms512_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 3 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+R3c_d2_ms1024_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 2 --msg-size 1024 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+R3d_d2_ms512_mb1_d12_s10	GTM_DISTS=1,2	--clauses 2880 --s 10.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+R3e_flat8_oracle_c1000	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-8:-7:-6:-5:-4:-3:-2:-1:1:2:3:4:5:6:7:8	--clauses 1000 --s 5.0 --depth 1 --T 50000 --q -1 --rho 0.0078
+R3f_d2_ms512_mb1_d12_s3	GTM_DISTS=1,2	--clauses 2880 --s 3.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+# controls
 E2_bag_d1	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
-E3_dist1	GTM_DISTS=1	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
