@@ -98,6 +98,38 @@ def clause_stats(model):
     return st
 
 
+def node_diag(model, val, n_graphs=100):
+    """oracle pass over validation graphs: message fill at the centre vs context nodes per layer,
+    senders per context node, and the fraction of centre clauses still true after each layer"""
+    from gtm_oracle import OracleGTM
+    from gtmcore import Dataset
+    m = OracleGTM.load(model)
+    c = m.cfg
+    if c.NT != 2 or c.D < 2:
+        return {}
+    ds = Dataset.load(val)
+    odd = np.arange(c.C) % 2 == 1
+    send = (m.ta[0][:, :c.H] >= m.half).any(1) if c.senders else np.ones(c.C, bool)
+    acc = {}
+    for g in range(min(n_graphs, ds.n_graphs)):
+        n0, n1 = ds.node_offset[g], ds.node_offset[g + 1]
+        types = ds.node_type[n0:n1]
+        cen, ctx = np.nonzero(types == 1)[0][0], types == 0
+        typeok = types[None, :] == (np.arange(c.C) % 2)[:, None]
+        X = ds.X[n0:n1]
+        out = typeok & ~(((m.ta[0] >= m.half).astype(np.int32) @ (~X).astype(np.int32).T) > 0)
+        vals = {"senders_ctx": (out[:, ctx] & send[:, None]).sum(0).mean(), "centre_true_L0": out[odd, cen].mean()}
+        for d in range(1, c.D):
+            Xm = m._messages(ds, n0, n1 - n0, out)
+            vals[f"fill{d}_centre"] = Xm[cen, :c.MS].mean()
+            vals[f"fill{d}_ctx"] = Xm[ctx, :c.MS].mean()
+            out = out & typeok & ~(((m.ta[d] >= m.half).astype(np.int32) @ (~Xm).astype(np.int32).T) > 0)
+            vals[f"centre_true_L{d}"] = out[odd, cen].mean()
+        for k, v in vals.items():
+            acc.setdefault(k, []).append(float(v))
+    return {k: round(float(np.mean(v)), 3) for k, v in acc.items()}
+
+
 def run(exp, threads):
     name, env = exp["name"], exp["env"]
     wd = os.path.join(TB, "runs", name)
@@ -126,11 +158,14 @@ def run(exp, threads):
                       str(threads), "--tag", name], dict(env, GTM_STAGE2_DATA=C.DATA))
             res = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][0][7:])
             res.update(exp=name, windows=done, ex_per_s=round(SHARD / dt), train_s=round(train_s),
-                       data=data_key(env), cfg=" ".join(exp["cfg"]), engine=rev, **clause_stats(model))
+                       data=data_key(env), cfg=" ".join(exp["cfg"]), engine=rev, **clause_stats(model),
+                       **node_diag(model, os.path.join(d, "val.gtmd")))
             line = json.dumps(res)
             print("TB " + line, flush=True)
             print(f"   {name} @{done // 1000}k: acc@1 {res['acc@1']:.4f} acc@10 {res['acc@10']:.4f} "
-                  f"mrr {res['mrr']:.4f} per-bit {res['per-bit']:.4f} {res['fill']} | {res['ex_per_s']} ex/s", flush=True)
+                  f"mrr {res['mrr']:.4f} per-bit {res['per-bit']:.4f} {res['fill']} | centre fill "
+                  f"{[res.get(f'fill{k}_centre') for k in range(1, 8) if f'fill{k}_centre' in res]} | {res['ex_per_s']} ex/s",
+                  flush=True)
             with open(os.path.join(TB, "results.jsonl"), "a") as f:
                 f.write(line + "\n")
 

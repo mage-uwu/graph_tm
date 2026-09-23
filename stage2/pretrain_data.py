@@ -119,7 +119,7 @@ def main():
     t = np.load(os.path.join(C.DATA, "teacher.npz"))
     codes = t["codes"].astype(np.int32)
     mask_id = int(np.nonzero(t["vocab"] == "[MASK]")[0][0])
-    rows = C.symbol_rows(len(codes))
+    rows = C.symbol_rows(len(codes), mask_id=mask_id)
     t0 = time.time()
     true, wt = build(a.split, a.n, a.seed + (0 if a.split == "train" else 10**6), a.out, codes, mask_id, rows)
     if a.cmd == "evalset":

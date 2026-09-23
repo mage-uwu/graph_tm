@@ -44,7 +44,7 @@ def gtm_bits(model, seqs, centres, threads, tag):
     """packed clause bits (N, Cw) for window graphs with the centre token masked"""
     t = np.load(os.path.join(C.DATA, "teacher.npz"))
     mask_id = int(np.nonzero(t["vocab"] == "[MASK]")[0][0])
-    rows = C.symbol_rows(len(t["codes"]))
+    rows = C.symbol_rows(len(t["codes"]), mask_id=mask_id)
     hdr = open(model, "rb").read(16)
     n_clauses, n_out = int(np.frombuffer(hdr, "<u4", 2, 8)[0]), int(np.frombuffer(hdr, "<u4", 1, 12)[0])
     out = []

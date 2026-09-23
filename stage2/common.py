@@ -97,9 +97,17 @@ def symbol_bits(vocab_size, h=H):
     return f
 
 
-def symbol_rows(vocab_size, h=H):
+# GTM_MASK_EMPTY=1: [MASK] gets the all-zero code (x = 0, not x = 1). Centre clauses then hold
+# no positive layer-0 literal, so with --senders pos they do not broadcast from the centre.
+MASK_EMPTY = os.environ.get("GTM_MASK_EMPTY") == "1"
+
+
+def symbol_rows(vocab_size, h=H, mask_id=None):
     """(V, W) packed literal rows, one per token id"""
-    return literal_rows(symbol_bits(vocab_size, h))
+    f = symbol_bits(vocab_size, h)
+    if MASK_EMPTY and mask_id is not None:
+        f[mask_id] = False
+    return literal_rows(f)
 
 
 def flat_graphs(seqs, centres, bits, pad_id, offsets=FLAT_OFFSETS, win=WIN):
