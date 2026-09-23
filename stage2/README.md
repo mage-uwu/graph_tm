@@ -100,3 +100,27 @@ clause bits: 0.536 (logistic) / 0.538 (TM head) vs 0.787 for bag of words.
 `testbed.sh` (on the pod) + `testbed.py`: experiments queued in `experiments.tsv` run to
 p-collapse (2M windows) with validation at 250k/500k/1M/1.5M/2M and clause statistics, so every
 change is benchmarked against the same point where the first run failed.
+
+### Testbed results so far (validation at p-collapse = 2M windows; bert-tiny 0.300 / 0.566)
+
+| exp | change | acc@1 | acc@10 | per-bit | centre fill |
+|---|---|---|---|---|---|
+| E0 | first-run config (depth 3, msg 256, +-1/2/4) | 0.054 | 0.230 | 0.681 | 97-98% |
+| E1 | **flat oracle**: depth 1 on the +-2 neighbours' codes | 0.148 | 0.307 | 0.712 | - |
+| ridge | linear readout of the same +-2 codes (500k windows) | 0.145 | 0.303 | 0.710 | - |
+| R3e | flat oracle on +-8 codes (C=1000, matched params) | 0.136 | 0.290 | 0.706 | - |
+| R2b | depth 2, msg 512, 1 bit/sender, +-1/2 | 0.122 | 0.281 | 0.702 | 88% |
+| **R3d** | R2b with s=10 | **0.130** | **0.285** | **0.707** | 71% |
+| R3f | R2b with s=3 | 0.120 | 0.278 (1M) | 0.701 | 90% |
+| R3a | R2b with +-4 edges too | 0.106 (1M) | 0.275 | 0.700 | 88% |
+| R2a/R2c | empty [MASK] code | 0.053 | 0.229 | 0.687 | 8-11% |
+| R2d | depth 2, msg 256, 2 bits | 0.066 | 0.228 | 0.676 | 92% |
+| R3b | depth 3 (2 hops), C=1728 | 0.053 | 0.230 | 0.689 | 1% at layer 2 |
+| R3c | depth 2, msg 1024, C=1728 | 0.053 | 0.226 | 0.689 | 7% |
+| E2 | depth-1 bag of window (control) | 0.063 | 0.250 (500k) | 0.691 | - |
+
+Findings: (a) the TM head is not the limit on +-2 context (E1 = ridge); (b) one hop at msg 512
+recovers ~93% of that; (c) extra context does not help even when handed over directly (R3e), so
+at this budget a TM over random token codes behaves roughly like a linear model over them, which
+caps it far below bert-tiny; (d) every run that collapses (R2a, R2c, R3b, R3c) collapses the same
+way: context clauses lose all layer-0 literals, stop sending, and fill dies -> sender autopsy.
