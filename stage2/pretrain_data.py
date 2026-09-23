@@ -92,8 +92,12 @@ def sample_centres(lens, n, seed):
 
 
 def build(split, n, seed, out, codes, mask_id, rows, seqs=None, lens=None):
-    if seqs is None:
+    if seqs is None and C.LAYOUT not in ("blt", "blt_flat", "tokhash"):
         seqs, lens = load_split(split)
+    if C.LAYOUT in ("blt", "blt_flat", "tokhash"):
+        import blt
+        true, wt, _ = blt.build(split, n, seed, out, codes, C.LAYOUT)
+        return true, wt
     cent = sample_centres(lens, n, seed)
     if C.LAYOUT == "flat":
         npg, epn, edges, X, nt, wt, h = C.flat_graphs(seqs, cent, C.symbol_bits(len(codes)), pad_id=0)

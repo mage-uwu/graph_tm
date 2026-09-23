@@ -90,8 +90,51 @@ def literal_rows(feat_bool):
     return np.packbits(lit.reshape(n, W, 64), axis=2, bitorder="little").reshape(n, W * 8).view("<u8")
 
 
+# GTM_FEAT=ngram: BLT-style hashed n-gram token codes, made Tsetlin-friendly. Each component
+# (whole-token hash x NG_WHOLE, char 3..6-grams of the token with boundary marks, a "##"
+# continuation flag) gets a fixed random +-1 vector; the token code is the sign of their sum
+# (a hyperdimensional majority bundle): dense (~50% ones, so negated literals stay informative)
+# and similarity-preserving (tokens sharing n-grams share bits). No gradients, no teacher.
+FEAT = os.environ.get("GTM_FEAT", "random")
+NG_RANGE = (3, 6)
+NG_WHOLE = float(os.environ.get("GTM_NG_WHOLE", 4))
+
+
+def _hvec(key, h):
+    import hashlib
+    seed = int.from_bytes(hashlib.blake2b(key.encode(), digest_size=8).digest(), "little")
+    return np.random.default_rng(seed).integers(0, 2, h, dtype=np.int8) * 2 - 1
+
+
+def ngram_bits(vocab, h=H):
+    out = np.zeros((len(vocab), h), dtype=bool)
+    cache = {}
+    for i, tok in enumerate(vocab):
+        cont = tok.startswith("##")
+        w = tok[2:] if cont else tok
+        acc = NG_WHOLE * _hvec("W:" + tok, h).astype(np.float64)
+        s = ("" if cont else "<") + w + ">"
+        for n in range(NG_RANGE[0], NG_RANGE[1] + 1):
+            for j in range(len(s) - n + 1):
+                g = s[j:j + n]
+                if g not in cache:
+                    cache[g] = _hvec("G:" + g, h)
+                acc += cache[g]
+        if cont:
+            acc += _hvec("F:cont", h)
+        acc += 1e-3 * _hvec("T:" + tok, h)  # tie-break
+        out[i] = acc > 0
+    return out
+
+
 def symbol_bits(vocab_size, h=H):
     """(V, h) bool code per token id"""
+    if FEAT == "ngram":
+        p = os.path.join(DATA, f"ngram_bits_{h}_{NG_WHOLE:g}.npy")
+        if not os.path.exists(p):
+            vocab = [l.rstrip("\n") for l in open(fetch(TOKENIZER_REPO, "vocab.txt", repo_type="model"), encoding="utf-8")]
+            np.save(p, ngram_bits(vocab[:vocab_size], h))
+        return np.load(p)
     f = np.zeros((vocab_size, h), dtype=bool)
     np.put_along_axis(f, symbol_table(vocab_size, h), True, axis=1)
     return f
