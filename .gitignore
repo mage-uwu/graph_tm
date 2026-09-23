@@ -1,0 +1,5 @@
+stage1/gtm
+stage1/gtm_portable
+data/*
+!data/.keep
+__pycache__/

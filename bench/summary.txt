@@ -1,0 +1,8 @@
+infer seq60         179895 ->    200341    1.11x  (identical sums)
+infer mask400        22116 ->    218333    9.87x  (identical sums)
+infer codes256       21265 ->    160360    7.54x  (identical sums)
+infer mask4k          1568 ->     79071   50.43x  (identical sums)
+train seq60         125544 ->    141609    1.13x  (new RNG spec)
+train mask400        15759 ->     47857    3.04x  (new RNG spec)
+train codes256        5099 ->     19481    3.82x  (new RNG spec)
+train mask4k           556 ->      1196    2.15x  (new RNG spec)
