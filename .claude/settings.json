@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude plugin marketplace add runpod/runpod-plugins-official)",
+      "Bash(claude plugin install runpod@runpod)",
+      "Bash(claude plugin enable runpod@runpod)",
+      "Bash(claude plugin list:*)"
+    ]
+  }
+}
