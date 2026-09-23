@@ -2,8 +2,6 @@
 # Round 1: isolate the bottleneck. Is it message passing, or the TM head on this target?
 E0_base	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
 E1_flat_oracle_d1	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
-E2_bag_d1	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
-E3_dist1	GTM_DISTS=1	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
 # Round 2: centre-node message fill is 96-98% (98 senders x 6 in-edges x 2 bits into 256 bits):
 # an overloaded Bloom filter. Aim for ~50% at the centre at the same 4.42M params: depth 2 (one
 # hop over +-1/+-2 = the flat oracle's receptive field) frees the budget for msg-size 512,
@@ -12,3 +10,6 @@ R2a_d2_ms512_mb1_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 
 R2b_d2_ms512_mb1_d12	GTM_DISTS=1,2	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
 R2c_d2_ms512_mb1_d124_me	GTM_DISTS=1,2,4;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
 R2d_d2_ms256_mb2_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 256 --msg-bits 2 --senders pos --q -1 --rho 0.0078
+# round 1 leftovers (lower priority)
+E2_bag_d1	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+E3_dist1	GTM_DISTS=1	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
