@@ -130,6 +130,19 @@ def node_diag(model, val, n_graphs=100):
     return {k: round(float(np.mean(v)), 3) for k, v in acc.items()}
 
 
+def residual_init(model, k, layers="msg"):
+    """Tsetlin-native residual initialization: start the automata of message layers (d >= 1) k
+    states below the include threshold instead of one, so every clause starts as its layer-0
+    part with pass-through deeper layers, and a message literal is included only after ~k net
+    reinforcements. Pure initial state: the engine and its semantics are unchanged."""
+    from gtmcore import load_model, save_model
+    cfg, hv, w, ta, step = load_model(model)
+    half = 1 << (cfg.B - 1)
+    for d in range(1, cfg.D):
+        ta[d][:] = max(0, half - k)
+    save_model(model, cfg, hv, w, ta, step)
+
+
 def run(exp, threads):
     name, env = exp["name"], exp["env"]
     wd = os.path.join(TB, "runs", name)
@@ -143,8 +156,12 @@ def run(exp, threads):
     print(f"== [{time.strftime('%H:%M:%S')}] {name}: data {data_key(env)} ready ({time.time() - t0:.0f}s), "
           f"cfg {' '.join(exp['cfg'])}, engine {rev}", flush=True)
     model = os.path.join(wd, "m.gtmm")
-    subprocess.run([gtm, "init", "--data", os.path.join(d, "s1.gtmd"), "--out", model] + exp["cfg"],
+    cfg = [a for a in exp["cfg"] if not a.startswith("@")]
+    opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
+    subprocess.run([gtm, "init", "--data", os.path.join(d, "s1.gtmd"), "--out", model] + cfg,
                    check=True, capture_output=True)
+    if "ri" in opts:
+        residual_init(model, int(opts["ri"]))
     done, train_s = 0, 0.0
     for i in range(1, P_COLLAPSE // SHARD + 1):
         t1 = time.time()

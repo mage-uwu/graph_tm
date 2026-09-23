@@ -15,6 +15,16 @@ R2d_d2_ms256_mb2_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 
 # (+-4 edges; 2 hops at matched params), larger messages at matched params, s, and a +-8 flat oracle.
 R3a_d2_ms512_mb1_d124	GTM_DISTS=1,2,4	--clauses 2880 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3b_d3_ms512_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 3 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+# Round 4 (sender autopsy): a context clause whose deeper message layers block everywhere counts as
+# not fired, and Type I "forget" then erodes ALL its layers including layer 0 -> it loses its
+# positive literals -> it can no longer send -> fill drops -> more clauses block (cascade). Message
+# automata start 1 state below include, so ~100 near-always-true message bits lock in at once.
+# Residual init (@ri=K): message-layer automata start K states below include (pass-through), so a
+# clause starts as its layer-0 part and adds message literals only after ~K net reinforcements.
+R4a_d3_c1728_ri64	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=64
+R4b_d2_c2880_ri64	GTM_DISTS=1,2	--clauses 2880 --depth 2 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=64
+R4c_d3_c1728_ri32	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=32
+R4d_d3_c1728_ri120	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=120
 R3c_d2_ms1024_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 2 --msg-size 1024 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3d_d2_ms512_mb1_d12_s10	GTM_DISTS=1,2	--clauses 2880 --s 10.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3e_flat8_oracle_c1000	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-8:-7:-6:-5:-4:-3:-2:-1:1:2:3:4:5:6:7:8	--clauses 1000 --s 5.0 --depth 1 --T 50000 --q -1 --rho 0.0078
