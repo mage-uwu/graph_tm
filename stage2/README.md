@@ -124,3 +124,28 @@ recovers ~93% of that; (c) extra context does not help even when handed over dir
 at this budget a TM over random token codes behaves roughly like a linear model over them, which
 caps it far below bert-tiny; (d) every run that collapses (R2a, R2c, R3b, R3c) collapses the same
 way: context clauses lose all layer-0 literals, stop sending, and fill dies -> sender autopsy.
+
+### Depth (rounds 4-8)
+
+Sender autopsy (`autopsy.py`, oracle traces per checkpoint): ~72% of a clause's Type I events
+arrive while its final conjunction is false everywhere; the "forget" applied then hits every
+layer, so a clause failing at a message layer loses its layer-0 (sender) literals. Per layer-0
+literal the drift is ~0 at s=5 (+0.028 Type I fired, +0.035 Type II, -0.068 forget), so senders
+have no restoring force and depth 3's transient empties them (83% empty layer 0 at 50k). A
+literal-budget explanation was tested and refuted (`--max-inc 4096` still collapses).
+
+| exp | change (depth 3 unless noted, C=1728 matched params) | acc@1 | acc@10 @2M | stability |
+|---|---|---|---|---|
+| R3b | baseline | 0.053 | 0.230 | collapsed by 250k |
+| R4a | residual init (message automata start 64 below include) | 0.074 | 0.241 | 0.280 @500k, then collapses |
+| R5a/b | per-layer s, layer 0 at 10/20 | ~0.06 | 0.249 | senders over-specialise, fill 2-5% |
+| **L1** | **engine: `--forget layered`** | 0.102 | **0.277** | **stable (first stable depth 3)** |
+| L2 | layered + residual init | 0.112 | 0.282 | stable |
+| R4b | depth 2 + residual init (C=2880) | 0.137 | **0.297** | best overall, 97% of flat oracle |
+| L3 | depth 2 + layered + residual init | 0.115 | 0.288 | stable |
+| B1 | BLT entropy patches as nodes, depth 2 | 0.121 | 0.275 | still climbing |
+
+Layered forget overshoots: without forget from deeper failures, layer 0 only grows and context
+clauses become exact token detectors (~51+51 of 128 literals, 19 senders/node), so layer-2 centre
+fill is ~2% and the second hop carries almost nothing. A literal budget bounds this (local trace,
+`--max-inc 32`: ~22 layer-0 literals, layer-2 centre fill 7.5%); round 8 sweeps it.
