@@ -55,6 +55,7 @@ B1_blt_d2_s10	GTM_LAYOUT=blt;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T
 # layer-0 forget (low layer-0 s).
 L5_d3_layered_ri64_maxinc32	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 32 @ri=64
 L6_d3_layered_ri64_maxinc16	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 16 @ri=64
+L9_d3_layered_ri64_maxinc8	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 8 @ri=64
 L7_d3_layered_ri64_s2.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 2,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
 L8_d3_layered_ri64_s3.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 3,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
 B2_blt_flat_oracle	GTM_LAYOUT=blt_flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
