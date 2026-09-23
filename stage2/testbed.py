@@ -7,6 +7,10 @@ dense codes, node types, +-1/2/4 edges) where it clearly failed: WikiText-103 va
 Every experiment trains to P_COLLAPSE windows and is evaluated at EVAL_AT on the same 10k
 validation windows, so curves line up with that run.
 
+Options in the config (not passed to the engine): @ri=K residual init; @windows=N train N windows
+instead of P_COLLAPSE (validation every 1M after 2M); @full=1 then run the proper run's downstream
+half (20k-window test, SST-2 / QNLI / CoNLL adapters, bert-tiny baselines unless @baselines=0).
+
 Queue: stage2/experiments.tsv, one experiment per line (tab-separated; # comments):
     name <TAB> data env (K=V;K=V or -) <TAB> gtm config
 The data env selects the graph construction (GTM_DISTS, GTM_LAYOUT, GTM_FLAT_OFFSETS,
@@ -63,12 +67,12 @@ def py(args, env):
     return r.stdout
 
 
-def ensure_data(env):
+def ensure_data(env, windows=P_COLLAPSE, test=False):
     d = os.path.join(TB, "data", data_key(env))
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "lock"), "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
-        for i in range(1, P_COLLAPSE // SHARD + 1):
+        for i in range(1, windows // SHARD + 1):
             p = os.path.join(d, f"s{i}.gtmd")
             if not os.path.exists(p):
                 py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i),
@@ -77,6 +81,9 @@ def ensure_data(env):
         v = os.path.join(d, "val.gtmd")
         if not os.path.exists(v + ".npz"):
             py(["pretrain_data.py", "evalset", "--split", "validation", "--n", "10000", "--out", v], env)
+        t = os.path.join(d, "test20k.gtmd")
+        if test and not os.path.exists(t + ".npz"):
+            py(["pretrain_data.py", "evalset", "--split", "test", "--n", "20000", "--out", t], env)
     return d
 
 
@@ -152,25 +159,27 @@ def run(exp, threads):
     gtm = os.path.join(wd, "gtm")
     shutil.copy(C.GTM, gtm)  # the sync loop may rebuild stage1/gtm while we run
     t0 = time.time()
-    d = ensure_data(env)
+    opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
+    windows = int(float(opts.get("windows", P_COLLAPSE)))
+    eval_at = set(EVAL_AT) | set(range(P_COLLAPSE, windows + 1, 1_000_000))
+    d = ensure_data(env, windows, test="full" in opts)
     print(f"== [{time.strftime('%H:%M:%S')}] {name}: data {data_key(env)} ready ({time.time() - t0:.0f}s), "
           f"cfg {' '.join(exp['cfg'])}, engine {rev}", flush=True)
     model = os.path.join(wd, "m.gtmm")
     cfg = [a for a in exp["cfg"] if not a.startswith("@")]
-    opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
     subprocess.run([gtm, "init", "--data", os.path.join(d, "s1.gtmd"), "--out", model] + cfg,
                    check=True, capture_output=True)
     if "ri" in opts:
         residual_init(model, int(opts["ri"]))
     done, train_s = 0, 0.0
-    for i in range(1, P_COLLAPSE // SHARD + 1):
+    for i in range(1, windows // SHARD + 1):
         t1 = time.time()
         subprocess.run([gtm, "train", "--data", os.path.join(d, f"s{i}.gtmd"), "--model", model, "--epochs", "1",
                         "--threads", str(threads), "--save", model], check=True, capture_output=True)
         dt = time.time() - t1
         train_s += dt
         done += SHARD
-        if done in EVAL_AT:
+        if done in eval_at:
             out = py(["eval_mlm.py", "--model", model, "--evalset", os.path.join(d, "val.gtmd"), "--threads",
                       str(threads), "--tag", name], dict(env, GTM_STAGE2_DATA=C.DATA))
             res = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][0][7:])
@@ -185,6 +194,39 @@ def run(exp, threads):
                   flush=True)
             with open(os.path.join(TB, "results.jsonl"), "a") as f:
                 f.write(line + "\n")
+    if "full" in opts:
+        full(name, env, model, d, threads, opts.get("baselines", "1") == "1")
+
+
+def full(name, env, model, d, threads, baselines=True):
+    """the proper run's downstream half, on the trained model: masked-token test (20k WikiText-103
+    test windows, same windows bert-tiny is scored on), then frozen-feature adapters on SST-2 /
+    QNLI / CoNLL-2003 next to the lexical baseline and bert-tiny frozen / fine-tuned"""
+    e = dict(env, GTM_STAGE2_DATA=C.DATA)
+    t = os.path.join(d, "test20k.gtmd")
+    steps = [["eval_mlm.py", "--evalset", t, "--baselines"], ["bert_baselines.py", "mlm", "--evalset", t]] * baselines
+    steps += [["eval_mlm.py", "--model", model, "--evalset", t, "--threads", str(threads), "--tag", name + "-test"]]
+    for task in ("sst2", "qnli", "conll"):
+        steps += [["adapters.py", "--task", task, "--features", "gtm", "--model", model, "--tag", name, "--threads", str(threads)],
+                  ["adapters.py", "--task", task, "--features", "gtm+bow", "--model", model, "--tag", name, "--threads", str(threads)]]
+        steps += [["adapters.py", "--task", task, "--features", "bow", "--tag", name + "-lexical", "--threads", str(threads)],
+                  ["bert_baselines.py", "task", "--task", task, "--mode", "frozen"],
+                  ["bert_baselines.py", "task", "--task", task, "--mode", "finetune"]] * baselines
+    if os.environ.get("TB_SMOKE"):
+        steps = [s + ["--limit", "300"] if s[0] == "adapters.py" else s for s in steps]
+        e["BERT_LIMIT"] = "300"
+    for s in steps:
+        print(f"== [{time.strftime('%H:%M:%S')}] {name}: {' '.join(s[:3])}", flush=True)
+        try:
+            out = py(s, e)
+        except RuntimeError as ex:  # one failed measurement must not lose the rest
+            print(f"== {name}: step FAILED {str(ex)[-2000:]}", flush=True)
+            continue
+        for l in out.splitlines():
+            if l.startswith("RESULT "):
+                print(f"FULL {name} {l}", flush=True)
+                with open(os.path.join(TB, "full.jsonl"), "a") as f:
+                    f.write(json.dumps(dict(json.loads(l[7:]), exp=name)) + "\n")
 
 
 def claim(name):
