@@ -40,12 +40,19 @@ Two things live here and MUST stay byte-for-byte identical to stage1/gtm.c:
    (algebraically identical to CUDA's "target*sign > 0 ? w += sign : w -= sign"), except that
    growing |w| is blocked at INT_MAX, and without negative clauses w is clamped at >= 1.
 
+   Layered forget (model flag, default off = original semantics): a clause that did not fire
+   normally gets Type I "forget" on every layer. With layered forget it is forgotten only from
+   the first layer at which it became false at every node onwards; the layers before that (in
+   particular layer 0, which decides whether a clause sends messages) matched somewhere and are
+   left alone. Per-layer credit assignment without gradients.
+
    Message senders (model flag): 0 = every clause true at a node sends (GraphTM); 1 = only
    clauses that include at least one positive layer-0 literal send.
 
 2. File formats: .gtmd (datasets) and .gtmm (models). Little-endian.
    .gtmm v2 header: magic, ver, C, O, H, NT, D, MS, MB, B, boost, neg, max_inc, T, senders
-   (u32 each, T i32; v1 files have 0 in the senders slot), then q, s[D], rho (v2 only) as f64,
+   (u32 each, T i32; v1 files have 0 in the senders slot; bit 0 = senders, bit 1 = layered
+   forget), then q, s[D], rho (v2 only) as f64,
    seed, step as u64, hv u32[C][MB], weights i32[O][C], TA states u16 [C][lits] per layer.
 """
 import math
@@ -227,7 +234,7 @@ GTMM_HDR = "<4s" + "I" * 12 + "iI"
 class ModelConfig:
     def __init__(self, clauses, outputs, hv_size, n_node_types, depth=1, msg_size=256,
                  msg_bits=2, state_bits=8, boost=1, negative_clauses=1,
-                 max_included_literals=None, T=100, q=1.0, s=1.0, seed=42, rho=1.0, senders=0):
+                 max_included_literals=None, T=100, q=1.0, s=1.0, seed=42, rho=1.0, senders=0, layered=0):
         self.C, self.O, self.H = int(clauses), int(outputs), int(hv_size)
         self.L = 2 * self.H
         self.NT = int(n_node_types)
@@ -246,12 +253,13 @@ class ModelConfig:
         self.seed = int(seed)
         self.rho = float(rho)
         self.senders = int(senders)  # 0: all clauses send messages (GraphTM); 1: only clauses with a positive layer-0 literal
+        self.layered = int(layered)  # 1: forget only from the first layer at which a non-firing clause died
 
 
 def save_model(path, cfg, hv, w, ta, step):
     with open(path, "wb") as f:
         f.write(struct.pack(GTMM_HDR, b"GTMM", 2, cfg.C, cfg.O, cfg.H, cfg.NT, cfg.D, cfg.MS,
-                            cfg.MB, cfg.B, cfg.boost, cfg.neg, cfg.max_inc, cfg.T, cfg.senders))
+                            cfg.MB, cfg.B, cfg.boost, cfg.neg, cfg.max_inc, cfg.T, cfg.senders | (cfg.layered << 1)))
         f.write(struct.pack("<d", cfg.q))
         f.write(struct.pack("<%dd" % cfg.D, *cfg.s))
         f.write(struct.pack("<d", cfg.rho))  # v2
@@ -275,7 +283,7 @@ def load_model(path):
     if ver >= 2:
         (rho,) = struct.unpack_from("<d", buf, off); off += 8
     seed, step = struct.unpack_from("<QQ", buf, off); off += 16
-    cfg = ModelConfig(C, O, H, NT, D, MS, MB, B, boost, neg, max_inc, T, q, s, seed, rho, senders)
+    cfg = ModelConfig(C, O, H, NT, D, MS, MB, B, boost, neg, max_inc, T, q, s, seed, rho, senders & 1, (senders >> 1) & 1)
 
     def take(n, dt):
         nonlocal off

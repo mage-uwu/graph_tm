@@ -90,6 +90,7 @@ class OracleGTM:
         out = typeok & ~viol
         n_inc = inc.sum(1)
         layer_X = [X0]
+        alive = [out.any(axis=1)]
         for d in range(1, c.D):
             Xm = self._messages(ds, n0, n, out)
             inc = self.ta[d] >= self.half
@@ -97,8 +98,13 @@ class OracleGTM:
             out = out & typeok & ~viol
             n_inc = n_inc + inc.sum(1)
             layer_X.append(Xm)
+            alive.append(out.any(axis=1))
         clause_true = out.any(axis=1)
         class_sum = self.w[:, clause_true].sum(axis=1)
+        # first layer at which each clause is false at every node (D if it survives all layers)
+        alive = np.stack(alive)
+        dead_at = np.where(alive.all(0), c.D, np.argmin(alive, axis=0))
+        self._dead_at = dead_at
         return out, clause_true, class_sum, n_inc, layer_X
 
     def score(self, ds):
@@ -155,6 +161,8 @@ class OracleGTM:
                 for k in range(c.O):
                     fb_sign = upd[k, j]
                     if fb_sign > 0:  # Type I
+                        if not fired and c.layered and layer < self._dead_at[j]:
+                            continue  # layered forget: this layer matched somewhere, spare it
                         fb = feedback_mask(c.seed, t, j, k, c.O, layer, nl, self.thr_s[layer])
                         st = ta[j]
                         if fired and n_inc[j] <= c.max_inc:

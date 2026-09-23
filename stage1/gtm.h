@@ -31,6 +31,7 @@ typedef struct {
     double s[GTM_MAX_DEPTH];
     double rho;         /* automaton feedback budget (1 = original semantics) */
     uint32_t senders;   /* 0: all clauses send messages; 1: only clauses with a positive layer-0 literal */
+    uint32_t layered;   /* 1: a non-firing clause is forgotten only from the layer where it died onwards */
     uint64_t seed, step;
 
     /* derived */
@@ -73,6 +74,7 @@ typedef struct {
     uint64_t seed;
     double rho;         /* 0 is treated as 1 */
     uint32_t senders;
+    uint32_t layered;
 } gtm_config;
 
 /* model lifecycle */

@@ -39,6 +39,14 @@ R5d_d2_c2880_s20.10	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 20,10 --T 50000 -
 # RollPolyHash) fixed +-1 embeddings, entropy patching (count-based char LM, global threshold,
 # ~4.5 bytes/patch), patch code = sign(sum) of its byte vectors (majority-bundle pooling). Same
 # validation windows as all runs above. Linear readout of +-2 patches: 0.298 acc@10 vs 0.301 random codes.
+# Round 7: engine flag --forget layered (oracle + C, full parity + TSan clean): a non-firing clause is
+# forgotten only from the first layer at which it was false everywhere, so failing message layers no
+# longer erode the layer-0 sender literals. R4 showed residual init alone only delays the depth-3
+# collapse (0.280 at 500k -> 0.241 at 2M) and gives the best depth 2 (R4b 0.297).
+L1_d3_c1728_layered	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered
+L2_d3_c1728_layered_ri64	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
+L3_d2_c2880_layered_ri64	GTM_DISTS=1,2	--clauses 2880 --depth 2 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
+L4_d3_c1728_layered_ri64_d124	GTM_DISTS=1,2,4	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
 B1_blt_d2_s10	GTM_LAYOUT=blt;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
 B2_blt_flat_oracle	GTM_LAYOUT=blt_flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
 B3_tokhash_d2_s10	GTM_LAYOUT=tokhash;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512

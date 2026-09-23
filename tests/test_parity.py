@@ -91,7 +91,8 @@ def noncomplementary(ds, rng):
 def cfg_args(cfg):
     return ["--clauses", cfg.C, "--T", cfg.T, "--s", ",".join(repr(x) for x in cfg.s), "--q", repr(cfg.q),
             "--depth", cfg.D, "--msg-size", cfg.MS, "--msg-bits", cfg.MB, "--max-inc", cfg.max_inc,
-            "--state-bits", cfg.B, "--boost", cfg.boost, "--neg", cfg.neg, "--seed", cfg.seed, "--rho", repr(cfg.rho), "--senders", "pos" if cfg.senders else "all"]
+            "--state-bits", cfg.B, "--boost", cfg.boost, "--neg", cfg.neg, "--seed", cfg.seed, "--rho", repr(cfg.rho), "--senders", "pos" if cfg.senders else "all",
+            "--forget", "layered" if cfg.layered else "all"]
 
 
 def models_equal(pa, pb):
@@ -229,6 +230,11 @@ def test_training(rng, quick):
     ds = random_dataset(rng, 100, 96, 2, 2, 6, 1)
     train_case("multi_out", ds,
                ModelConfig(130, 6, 96, 2, depth=2, msg_size=192, T=25, q=0.5, s=2.0, seed=8), steps=100 * scale)
+    # layered forget: a non-firing clause keeps the layers it still matched somewhere (depth 3,
+    # positive senders, node types, decoupled feedback, so every code path of the flag is hit)
+    ds = random_dataset(rng, 80, 64, 2, 3, 12, 1)
+    train_case("layered", ds, ModelConfig(120, 12, 64, 2, depth=3, msg_size=128, T=25, q=11.0, s=(3.0, 2.0, 4.0),
+                                          seed=13, rho=0.5, senders=1, layered=1), steps=80 * scale)
 
 
 if __name__ == "__main__":

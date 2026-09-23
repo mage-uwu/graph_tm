@@ -12,6 +12,7 @@
  *   --q -1    symmetric negative feedback (q = O-1); use for multi-output targets
  *   --rho r   automaton feedback budget; ~2/O for many outputs (weights still see everything)
  *   --senders all|pos   pos: only clauses with a positive layer-0 literal send messages
+ *   --forget all|layered  layered: a non-firing clause is forgotten only from the layer where it died
  *             (keeps bundles from saturating with large clause pools; not GraphTM semantics)
  */
 #define _GNU_SOURCE
@@ -68,6 +69,7 @@ static void parse(int argc, char **argv, args_t *a) {
         else if (!strcmp(k, "--q")) a->cfg.q = atof(v);
         else if (!strcmp(k, "--rho")) a->cfg.rho = atof(v);
         else if (!strcmp(k, "--senders")) a->cfg.senders = !strcmp(v, "pos");
+        else if (!strcmp(k, "--forget")) a->cfg.layered = !strcmp(v, "layered");
         else if (!strcmp(k, "--depth")) a->cfg.D = (uint32_t)atoi(v);
         else if (!strcmp(k, "--msg-size")) a->cfg.MS = (uint32_t)atoi(v);
         else if (!strcmp(k, "--msg-bits")) a->cfg.MB = (uint32_t)atoi(v);
