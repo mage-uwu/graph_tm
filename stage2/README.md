@@ -80,3 +80,23 @@ Tried, did not help (400k windows each, WikiText-103 validation acc@10; prior-on
 | `--msg-bits 1` (fill is set by in-degree 6 x firing context clauses, not bits per clause) | 83-85% | 0.236-0.243 |
 | `--s 5,25,25` (per-layer s): message clauses over-specialise, nothing fires, fill 0 | 0% | 0.231 (= prior) |
 | msg-size 1024, C=960 (same params) | 18% | 0.230-0.235 |
+
+Full-run curve (validation, 10k windows; context-free prior per-bit 0.689, acc@10 0.231):
+
+| windows | UTC | acc@10 | per-bit | fill |
+|---|---|---|---|---|
+| 1M | 21:10:06 | 0.2377 | 0.6887 | 77.5% |
+| **2M = p-collapse** | **21:14:59** | **0.2237** | **0.6779** | 67.7% |
+| 3M | 21:20:42 | 0.2195 | 0.6740 | 62.7% |
+| 5M | 21:27:31 | 0.2109 | 0.6663 | 57.8% |
+| 10M | 21:38:29 | 0.2279 | 0.6768 | 55.1% |
+
+Test (20k windows): depth 3 acc@10 0.2235 / per-bit 0.6733; the depth-1 control (2M windows, no
+message passing) 0.2595 / 0.6874, i.e. message passing was net harmful. SST-2 with the depth-3
+clause bits: 0.536 (logistic) / 0.538 (TM head) vs 0.787 for bag of words.
+
+## Testbed
+
+`testbed.sh` (on the pod) + `testbed.py`: experiments queued in `experiments.tsv` run to
+p-collapse (2M windows) with validation at 250k/500k/1M/1.5M/2M and clause statistics, so every
+change is benchmarked against the same point where the first run failed.

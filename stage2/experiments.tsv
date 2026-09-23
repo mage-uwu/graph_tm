@@ -1,0 +1,6 @@
+# name	data env (K=V;K=V or -)	gtm config          -- each runs to p-collapse (2M windows), see testbed.py
+# Round 1: isolate the bottleneck. Is it message passing, or the TM head on this target?
+E0_base	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
+E1_flat_oracle_d1	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+E2_bag_d1	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+E3_dist1	GTM_DISTS=1	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078

@@ -37,8 +37,14 @@ H = 128          # node hypervector bits
 HV_BITS = int(os.environ.get("GTM_HV_BITS", 64))
 HV_SEED = 7
 WIN = 8          # tokens on each side of the window centre
-DISTS = (1, 2, 4)
+# edge distances (env GTM_DISTS, e.g. "1,2,4"); in-degree is 2 * len(DISTS) away from the edges
+DISTS = tuple(int(x) for x in os.environ.get("GTM_DISTS", "1,2,4").split(","))
 N_EDGE_TYPES = 2 * len(DISTS)  # type 2k: to the left at DISTS[k], 2k+1: to the right
+# GTM_LAYOUT=flat: no graph, one node per example whose features are the concatenated codes of
+# the tokens at GTM_FLAT_OFFSETS (e.g. "-2:-1:1:2"). A depth-1 model on it sees exactly the
+# local context that message passing would have to deliver: the upper bound for the TM head.
+LAYOUT = os.environ.get("GTM_LAYOUT", "window")
+FLAT_OFFSETS = tuple(int(x) for x in os.environ.get("GTM_FLAT_OFFSETS", "-2:-1:1:2").split(":"))
 # Node types: the window centre is type 1, context tokens type 0. A clause only fires on nodes
 # of type clause % NT, so odd clauses can only fire at the centre ([MASK]) and must predict from
 # the messages they receive there; even clauses are context-token detectors that send those
@@ -84,12 +90,27 @@ def literal_rows(feat_bool):
     return np.packbits(lit.reshape(n, W, 64), axis=2, bitorder="little").reshape(n, W * 8).view("<u8")
 
 
+def symbol_bits(vocab_size, h=H):
+    """(V, h) bool code per token id"""
+    f = np.zeros((vocab_size, h), dtype=bool)
+    np.put_along_axis(f, symbol_table(vocab_size, h), True, axis=1)
+    return f
+
+
 def symbol_rows(vocab_size, h=H):
     """(V, W) packed literal rows, one per token id"""
-    pos = symbol_table(vocab_size, h)
-    f = np.zeros((vocab_size, h), dtype=bool)
-    np.put_along_axis(f, pos, True, axis=1)
-    return literal_rows(f)
+    return literal_rows(symbol_bits(vocab_size, h))
+
+
+def flat_graphs(seqs, centres, bits, pad_id, offsets=FLAT_OFFSETS, win=WIN):
+    """one node per example: concatenated codes of the tokens at `offsets` from the centre
+    (pad_id outside the sequence). Returns (npg, epn, edges, X, node_type, window_tokens, h)."""
+    _, _, _, _, _, wt = window_graphs(seqs, centres, None, np.zeros((bits.shape[0], 1), np.uint64), win)
+    ids = np.stack([np.where(wt[:, win + o] >= 0, wt[:, win + o], pad_id) for o in offsets], 1)
+    feat = bits[ids].reshape(len(wt), -1)
+    n = len(wt)
+    return (np.ones(n, np.int64), np.zeros(n, np.int64), np.zeros((0, 2), np.int64), literal_rows(feat),
+            np.zeros(n, np.uint32), wt, feat.shape[1])
 
 
 def write_gtmd(path, h, n_node_types, n_edge_types, n_outputs, kind, npg, epn, edges, X, Y, node_type=None):

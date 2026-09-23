@@ -95,6 +95,11 @@ def build(split, n, seed, out, codes, mask_id, rows, seqs=None, lens=None):
     if seqs is None:
         seqs, lens = load_split(split)
     cent = sample_centres(lens, n, seed)
+    if C.LAYOUT == "flat":
+        npg, epn, edges, X, nt, wt, h = C.flat_graphs(seqs, cent, C.symbol_bits(len(codes)), pad_id=0)
+        true = wt[:, C.WIN]
+        C.write_gtmd(out, h, 1, 1, N_BITS, 1, npg, epn, edges, X, codes[true], nt)
+        return true, wt
     npg, epn, edges, X, nt, wt = C.window_graphs(seqs, cent, mask_id, rows)
     true = wt[:, C.WIN]
     C.write_gtmd(out, C.H, C.N_NODE_TYPES, C.N_EDGE_TYPES, N_BITS, 1, npg, epn, edges, X, codes[true], nt)
