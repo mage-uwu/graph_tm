@@ -54,3 +54,29 @@ and 2,000 held-out training examples are the dev set.
 After all three: per-bit 0.692 (prior 0.689), acc@1 0.065 (unigram 0.060), acc@10 0.245
 (unigram 0.277) at 200k windows. bert-tiny's MLM head on the same windows: acc@1 0.302,
 acc@10 0.569.
+
+## Status after the first full run (negative result, recorded as found)
+
+Pod run (16 threads, 3.0-5.3k windows/s) with the config above: validation acc@10 fell with
+data, 0.238 (1M windows) -> 0.224 (2M) -> 0.220 (3M) -> 0.214 (4M) -> 0.211 (5M), per-bit
+0.689 -> 0.666, message fill 77% -> 58%. The best point is ~200k windows; nothing learned
+beyond ~1.5 points of acc@10 over a context-free model.
+
+Local diagnosis (clause statistics per 100k windows):
+
+4. **The message layers repeat finding 1, mirrored.** Centre clauses include ~96 positive and
+   0 negated message literals. At 80-88% fill a set bit is nearly always true (cheap to
+   include, uninformative) and an unset bit is true ~17% of the time, below the ~1/s = 20%
+   inclusion threshold at s=5, so the informative "bit is 0" literals are never learned.
+   Context clauses slowly specialise (7.7 -> 14.2 layer-0 includes over 700k windows), fewer
+   clauses send, fill drops, the centre clauses' 96-bit conjunctions stop matching, and
+   accuracy drifts down while weights grow without bound.
+
+Tried, did not help (400k windows each, WikiText-103 validation acc@10; prior-only 0.231):
+
+| change | fill | acc@10 |
+|---|---|---|
+| baseline config | 80-88% | 0.235-0.247 |
+| `--msg-bits 1` (fill is set by in-degree 6 x firing context clauses, not bits per clause) | 83-85% | 0.236-0.243 |
+| `--s 5,25,25` (per-layer s): message clauses over-specialise, nothing fires, fill 0 | 0% | 0.231 (= prior) |
+| msg-size 1024, C=960 (same params) | 18% | 0.230-0.235 |
