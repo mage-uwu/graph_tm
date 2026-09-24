@@ -69,7 +69,8 @@ def dist_embedding(flat, V, n_tok, K=4096, offs=(-2, -1, 1, 2), dim=128, seed=0)
     P = sp.csr_matrix((pmi[keep], (M.row[keep], M.col[keep])), shape=M.shape)
     U, S, _ = randomized_svd(P, dim, random_state=seed, n_iter=5)
     emb = (U * np.sqrt(S)).astype(np.float32)
-    np.save(p, emb)
+    np.save(p + ".tmp.npy", emb)
+    os.replace(p + ".tmp.npy", p)  # atomic: parallel testbed slots may build it at once
     return emb
 
 

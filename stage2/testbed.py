@@ -178,9 +178,9 @@ def run(exp, threads):
     opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
     windows = int(float(opts.get("windows", P_COLLAPSE)))
     eval_at = set(EVAL_AT) | set(range(P_COLLAPSE, windows + 1, 1_000_000))
+    if "full" in opts or env.get("GTM_CODES") == "dist":
+        deps()  # adapters / bert baselines, and the learned codes' SVD (scikit-learn)
     d = ensure_data(env, test="full" in opts)
-    if "full" in opts:
-        deps()
     print(f"== [{time.strftime('%H:%M:%S')}] {name}: data {data_key(env)} ready ({time.time() - t0:.0f}s), "
           f"cfg {' '.join(exp['cfg'])}, engine {rev}", flush=True)
     model = os.path.join(wd, "m.gtmm")
