@@ -43,6 +43,7 @@ N_EDGE_TYPES = 2 * len(DISTS)  # type 2k: to the left at DISTS[k], 2k+1: to the 
 # GTM_LAYOUT=flat: no graph, one node per example whose features are the concatenated codes of
 # the tokens at GTM_FLAT_OFFSETS (e.g. "-2:-1:1:2"). A depth-1 model on it sees exactly the
 # local context that message passing would have to deliver: the upper bound for the TM head.
+CODES = os.environ.get("GTM_CODES", "random")  # random | dist (learned co-occurrence codes)
 LAYOUT = os.environ.get("GTM_LAYOUT", "window")
 FLAT_OFFSETS = tuple(int(x) for x in os.environ.get("GTM_FLAT_OFFSETS", "-2:-1:1:2").split(":"))
 # Node types: the window centre is type 1, context tokens type 0. A clause only fires on nodes
@@ -129,6 +130,12 @@ def ngram_bits(vocab, h=H):
 
 def symbol_bits(vocab_size, h=H):
     """(V, h) bool code per token id"""
+    if CODES == "dist":  # learned, gradient free, teacher free: see code_ceiling.py
+        import code_ceiling as CC
+        assert h == 128, "dist codes are 128 bits"
+        flat = np.load(os.path.join(DATA, "wt103_train.npz"))["flat"]
+        freq = np.bincount(flat, minlength=vocab_size)
+        return CC.balanced_sign(CC.dist_embedding(flat, vocab_size, 40_000_000), freq)
     if FEAT == "ngram":
         p = os.path.join(DATA, f"ngram_bits_{h}_{NG_WHOLE:g}.npy")
         if not os.path.exists(p):

@@ -162,3 +162,31 @@ than it gains: the second hop gets more signal, while the first hop and the cent
 
 So a global literal cap is not the fix for layered overshoot, and neither BLT variant beats random
 token codes: the byte-level codes carry less token identity than the +-2 token codes they replace.
+
+## Where the gap to bert-tiny comes from (`code_ceiling.py`, `decoder_cap.py`)
+
+Validation acc@10 on the same 10k windows. The GraphTM tracks a linear readout of its input codes
+(R4b 0.297 vs ridge 0.306 on random codes), so the ceilings of linear readouts and of the output
+decoder bound it:
+
+| what is measured | acc@1 | acc@10 |
+|---|---|---|
+| R4b (best GraphTM) | 0.137 | 0.297 |
+| ridge, +-2 context, random codes (the current input) | 0.145 | 0.306 |
+| ridge, +-2, **learned codes**: co-occurrence PPMI -> SVD -> balanced sign bits (gradient free, teacher free) | 0.183 | 0.348 |
+| ridge, +-2, sign bits of bert-tiny's own trained embeddings | 0.187 | 0.350 |
+| ridge, +-8 context: random / learned / bert-tiny codes | 0.150 / 0.187 / 0.194 | 0.314 / 0.354 / 0.360 |
+| bert-tiny's full distribution pushed through our output (256 teacher bits, vote-weighted agreement) | 0.287 | 0.469 |
+| same with 256 / 1024 / 4096 random output codes | 0.302 | 0.443 / 0.508 / 0.543 |
+| bert-tiny MLM head directly | 0.302 | 0.569 |
+
+So the 0.30 -> 0.57 gap splits into roughly three parts:
+1. **Output decoder, ~0.10.** Predicting 256 code bits and ranking by agreement blurs any uncertain
+   prediction: even bert-tiny's own distribution only reaches 0.469 through it. Wider output codes
+   recover most of it (4096 bits: 0.543), at a cost in output weights per clause.
+2. **Token codes, ~0.05.** Learned codes lift the linear ceiling 0.306 -> 0.348, and gradient-free
+   co-occurrence codes are as good as bert-tiny's trained embeddings here (0.348 vs 0.350).
+   `GTM_CODES=dist` selects them as GraphTM input.
+3. **Nonlinear composition, ~0.11** (0.36 -> 0.47): what bert-tiny's layers add over any linear map
+   of learned codes. This is the part a TM should supply through clauses and has not yet: on
+   random codes it matches the linear readout exactly.
