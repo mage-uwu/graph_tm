@@ -13,6 +13,8 @@ Features (binary):
   gtm+bow  both.
 Heads:
   logreg  logistic regression, L2 strength picked on dev
+  fuse    gtm+bow only: one logistic model per block, scores summed with the GraphTM weight
+          picked on dev (0 = lexical only)
   tm      depth-1 GraphTM on one node per example (a plain coalesced TM), s and epoch picked on dev
 Columns that are constant on train are dropped; the TM head keeps at most TM_MAX_F features
 (highest train variance) because the engine takes at most 8192 input bits per layer.
@@ -38,9 +40,11 @@ TM_CLAUSES, TM_EPOCHS = 2000, 6
 # example, or weight updates overshoot the vote margin every step (see stage2/README.md).
 TM_GRID = ((2000, 5.0), (8000, 5.0), (8000, 15.0))
 LOGREG_C = (0.01, 0.1, 1.0)
+FUSE_W = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0)
 
 
 # ---------------------------------------------------------------- features
+POOL = "or"  # --pool: or (clause fired anywhere) | thermo (how often: any, >= 1/4, >= 1/2 of positions)
 CENTRE = "mask"  # --centre: mask (context only: "what fits here") | word (word + context, like BERT)
 
 
@@ -72,8 +76,18 @@ def pooled(model, seqs, threads, tag):
     centres = np.stack([np.repeat(np.arange(len(seqs)), lens), np.concatenate([np.arange(l) for l in lens])], 1)
     packed, nc = gtm_bits(model, seqs, centres, threads, tag)
     starts = np.concatenate([[0], np.cumsum(lens)[:-1]])
-    pool = np.bitwise_or.reduceat(packed, starts, axis=0)
-    return np.unpackbits(pool, axis=1, bitorder="little")[:, :nc].astype(bool)
+    if POOL == "or":
+        pool = np.bitwise_or.reduceat(packed, starts, axis=0)
+        return np.unpackbits(pool, axis=1, bitorder="little")[:, :nc].astype(bool)
+    # thermo: the fraction of positions where each clause fires, as binary thresholds (any, >= 1/4,
+    # >= 1/2): keeps how often, not just whether, and stays binary for the TM head
+    frac = np.zeros((len(seqs), nc), np.float32)
+    for i in range(0, len(packed), 200_000):  # bounded memory
+        b = np.unpackbits(packed[i:i + 200_000], axis=1, bitorder="little")[:, :nc]
+        seq = np.searchsorted(starts, np.arange(i, i + len(b)), side="right") - 1
+        np.add.at(frac, seq, b)
+    frac /= lens[:, None]
+    return np.hstack([frac > 0, frac >= 0.25, frac >= 0.5])
 
 
 def bag(seqs, bins):
@@ -89,16 +103,19 @@ def token_rows(d):
 
 
 def features(task, kind, split, d, model, threads):
+    """(n, F) bool features and (F,) bool: True for GraphTM columns (False: lexical)"""
     parts = []
     if task == "sst2":
         if "gtm" in kind:
             parts.append(pooled(model, d["a"], threads, f"{task}{split}"))
+        n_gtm_parts = len(parts)
         if "bow" in kind:
             parts.append(bag(d["a"], BOW_BINS[task]))
     elif task == "qnli":
         if "gtm" in kind:
             qa, sa = pooled(model, d["a"], threads, f"{task}{split}q"), pooled(model, d["b"], threads, f"{task}{split}s")
             parts += [qa, sa, qa & sa]
+        n_gtm_parts = len(parts)
         if "bow" in kind:
             qa, sa = bag(d["a"], BOW_BINS[task]), bag(d["b"], BOW_BINS[task])
             parts += [qa, sa, qa & sa]
@@ -107,6 +124,7 @@ def features(task, kind, split, d, model, threads):
         if "gtm" in kind:
             packed, nc = gtm_bits(model, d["a"], cent, threads, f"{task}{split}")
             parts.append(np.unpackbits(packed, axis=1, bitorder="little")[:, :nc].astype(bool))
+        n_gtm_parts = len(parts)
         if "bow" in kind:
             B = BOW_BINS[task]
             for off in (-1, 0, 1):
@@ -116,7 +134,9 @@ def features(task, kind, split, d, model, threads):
                     if 0 <= q < len(d["a"][si]):
                         f[r, d["a"][si][q] % B] = True
                 parts.append(f)
-    return np.concatenate(parts, 1)
+    ng = sum(p.shape[1] for p in parts[:n_gtm_parts])
+    F = np.concatenate(parts, 1)
+    return F, np.arange(F.shape[1]) < ng
 
 
 def labels(task, d):
@@ -149,6 +169,39 @@ def head_logreg(F, Y, D, task):
             best = (c, m, clf)
     c, mdev, clf = best
     return {"dev": mdev, "test": metric(task, D["test"], clf.predict(Xs["test"])), "C": c}
+
+
+def head_fuse(F, Y, D, task, is_gtm):
+    """late fusion for gtm+bow: a logistic model per feature block (C picked on dev per block),
+    scores combined as z_bow + w * z_gtm with w picked on dev. w = 0 is exactly the lexical model,
+    so GraphTM features are only used as far as they help on held-out data (one shared L2 strength
+    over dense GraphTM bits and sparse lexical bits let the dense block swamp the lexical one)."""
+    from scipy.sparse import csr_matrix
+    from sklearn.linear_model import LogisticRegression
+    z = {}
+    for name, cols in (("gtm", is_gtm), ("bow", ~is_gtm)):
+        Xs = {s: csr_matrix(F[s][:, cols].astype(np.float32)) for s in F}
+        best = None
+        for c in LOGREG_C:
+            clf = LogisticRegression(C=c, max_iter=400).fit(Xs["train"], Y["train"])
+            m = metric(task, D["dev"], clf.predict(Xs["dev"]))
+            if best is None or key_metric(m) > key_metric(best[1]):
+                best = (c, m, clf)
+        clf = best[2]
+        z[name] = {s: clf.decision_function(Xs[s]) for s in ("dev", "test")}
+        z[name + "_C"], classes = best[0], clf.classes_
+
+    def predict(split, w):
+        sc = z["bow"][split] + w * z["gtm"][split]
+        return classes[(sc > 0).astype(int)] if sc.ndim == 1 else classes[sc.argmax(1)]
+    best = None
+    for w in FUSE_W:
+        m = metric(task, D["dev"], predict("dev", w))
+        if best is None or key_metric(m) > key_metric(best[1]):
+            best = (w, m)
+    w, mdev = best
+    return {"dev": mdev, "test": metric(task, D["test"], predict("test", w)), "w_gtm": w,
+            "C_gtm": z["gtm_C"], "C_bow": z["bow_C"]}
 
 
 def tm_dataset(path, F, y, n_classes):
@@ -194,29 +247,36 @@ def main():
     ap.add_argument("--features", required=True, choices=["gtm", "bow", "gtm+bow"])
     ap.add_argument("--model")
     ap.add_argument("--tag", default="")
-    ap.add_argument("--heads", default="logreg,tm")
+    ap.add_argument("--heads", default="logreg,fuse,tm", help="fuse: late fusion, gtm+bow only")
     ap.add_argument("--threads", type=int, default=os.cpu_count())
     ap.add_argument("--limit", type=int, default=0, help="smoke test: first N train/dev/test sequences")
+    ap.add_argument("--pool", choices=["or", "thermo"], default="or")
     ap.add_argument("--centre", choices=["mask", "word"], default="mask",
                     help="word: show the token at each position (word + context), for GTM_MASK_POLICY=bert models")
     a = ap.parse_args()
-    global CENTRE
-    CENTRE = a.centre
+    global CENTRE, POOL
+    CENTRE, POOL = a.centre, a.pool
     D = TK.load(a.task)
     if a.limit:
         D = {s: {k: v[:a.limit] for k, v in d.items()} for s, d in D.items()}
     t0 = time.time()
-    F = {s: features(a.task, a.features, s, D[s], a.model, a.threads) for s in ("train", "dev", "test")}
+    FB = {s: features(a.task, a.features, s, D[s], a.model, a.threads) for s in ("train", "dev", "test")}
+    F = {s: v[0] for s, v in FB.items()}
     Y = {s: labels(a.task, D[s]) for s in F}
     keep = F["train"].any(0) & ~F["train"].all(0)
     F = {s: v[:, keep] for s, v in F.items()}
+    is_gtm = FB["train"][1][keep]
     info = {"task": a.task, "features": a.features, "tag": a.tag, "n_features": int(keep.sum()),
             "density": float(F["train"].mean()), "feature_s": round(time.time() - t0, 1)}
     print(f"[{a.task}/{a.features}/{a.tag}] {info['n_features']} features, density {info['density']:.3f}, "
           f"built in {info['feature_s']}s", flush=True)
     for h in a.heads.split(","):
         t0 = time.time()
-        if h == "logreg":
+        if h == "fuse":
+            if a.features != "gtm+bow":
+                continue
+            r = head_fuse(F, Y, D, a.task, is_gtm)
+        elif h == "logreg":
             r = head_logreg(F, Y, D, a.task)
         else:
             Ft = F
