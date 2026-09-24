@@ -133,8 +133,14 @@ def run1_steps():
 def ensure_run1_export():
     """export run 1 once: if another export.py (the earlier one-liner) is waiting or serving, wait
     for its manifest instead of starting a second server on the same port"""
-    def manifests():
-        return glob.glob(os.path.join(RUN1, "export", "*", "MANIFEST.txt"))
+    def manifests():  # run 1's export: a manifest listing pt.ltc and logicae.log (shared base or old per-run dir)
+        base = os.environ.get("LAE_EXPORT_BASE", "/root/lae_exports")
+        found = []
+        for m in glob.glob(os.path.join(base, "*", "MANIFEST.txt")) + glob.glob(os.path.join(RUN1, "export", "*", "MANIFEST.txt")):
+            names = {l.split()[-1] for l in open(m) if l.strip()}
+            if {"pt.ltc", "logicae.log"} <= names and not any(n.startswith("sweep_") for n in names):
+                found.append(m)
+        return found
     if manifests():
         say(f"run 1 already exported ({manifests()[0]})")
         return
