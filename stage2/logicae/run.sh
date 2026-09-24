@@ -9,12 +9,14 @@
 #   GraphTM and bert-tiny), then SST-2 and QNLI fine-tuning, pretrained vs scratch.
 # Checkpoints: pt.ltc (latest) and pt.ltc.best (best validation CE) are overwritten at every
 # evaluation; the heartbeat also keeps the last 2 step-numbered copies (ckpt_<step>.ltc).
-# Knobs (env): PT_HOURS (2.5), PT_BATCH (256), MLM_CAP (512), FT_STEPS (2000), THREADS (nproc)
+# At the end, logicae/export.py serves the models and log over HTTP on :8888 for EXPORT_HOURS
+# (sha256 manifest, token in the "LAE-EXPORT serving" log line; 0 = no export).
+# Knobs (env): PT_HOURS (2.5), PT_BATCH (256), MLM_CAP (512), FT_STEPS (2000), THREADS (nproc), EXPORT_HOURS (3)
 set -uo pipefail
 cd "$(dirname "$0")/.."
 LB=${LB:-/root/logic-bert}; W=${W:-/root/lae}; mkdir -p $W
 T=${THREADS:-$(nproc)}; PT_HOURS=${PT_HOURS:-2.5}; PT_BATCH=${PT_BATCH:-256}; MLM_CAP=${MLM_CAP:-512}
-FT_STEPS=${FT_STEPS:-2000}
+FT_STEPS=${FT_STEPS:-2000}; EXPORT_HOURS=${EXPORT_HOURS:-3}; EXPORT_PY=$PWD/logicae/export.py
 ARCH="--vocab-size 30522 --code-bits 128 --width 1024 --blocks 16 --kernel 5 --cycle 4"
 exec > >(tee -a $W/logicae.log) 2>&1
 phase(){ echo "$*" > $W/phase; echo "== [$(date -u +%H:%M:%S)] $*"; }
@@ -71,3 +73,4 @@ ft sst2_scratch sst2 64 $ARCH
 ft qnli_pretrained qnli 128 --load pt.ltc
 ft qnli_scratch qnli 128 $ARCH
 phase "done"
+[ "$EXPORT_HOURS" != 0 ] && python3 $EXPORT_PY --dir $W --hours $EXPORT_HOURS
