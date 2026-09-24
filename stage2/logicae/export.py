@@ -41,7 +41,7 @@ def say(msg):
 def files(d):
     out = [f for f in sorted(glob.glob(os.path.join(d, "*")))
            if f.endswith(SUFFIXES) and os.path.isfile(f) and not os.path.basename(f).startswith("probe.")]
-    logs = [os.path.join(d, n) for n in ("logicae.log", "shootout.log")] + sorted(glob.glob(os.path.join(d, "sweep_*.log")))
+    logs = [os.path.join(d, n) for n in ("logicae.log", "shootout.log", "transfer.log")] + sorted(glob.glob(os.path.join(d, "sweep_*.log")))
     return out + [f for f in logs if os.path.isfile(f)]
 
 
