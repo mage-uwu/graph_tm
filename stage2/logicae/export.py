@@ -1,7 +1,7 @@
 """LogicAE export: copy the run's models and log off the pod.
 
 Copies every checkpoint / export in the run directory (pt.ltc, pt.ltc.best, ckpt_<step>.ltc and the
-fine-tuned <name>.ltc / .lth plus their .best copies) and logicae.log into one directory under a
+fine-tuned <name>.ltc / .lth plus their .best copies), logicae.log and any sweep_*.log into one directory under a
 random token, writes a sha256 manifest (`sha256  size  name`) and serves it read-only over HTTP on
 `port` for `hours` (detached, no directory listings: only /<token>/<file>). Stdlib only.
 
@@ -38,8 +38,8 @@ def say(msg):
 def files(d):
     out = [f for f in sorted(glob.glob(os.path.join(d, "*")))
            if f.endswith(SUFFIXES) and os.path.isfile(f) and not os.path.basename(f).startswith("probe.")]
-    log = os.path.join(d, "logicae.log")
-    return out + ([log] if os.path.isfile(log) else [])
+    logs = [os.path.join(d, "logicae.log")] + sorted(glob.glob(os.path.join(d, "sweep_*.log")))
+    return out + [f for f in logs if os.path.isfile(f)]
 
 
 def export(d, port, hours):

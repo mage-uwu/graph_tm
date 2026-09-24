@@ -1,28 +1,36 @@
-"""LogicAE 2x-scale follow-on: after run.sh's first run finishes, export it, then pretrain a model
-with twice the parameters on the same data and schedule, ranking every checkpoint on the 20k test.
+"""LogicAE scale-up: after run.sh's first run finishes, export it, run a short width / depth sweep,
+then continue the best configuration as the long run, ranking every checkpoint on the 20k test.
 
   python3 scale2x.py            (on the pod; stdlib only; paste-once, it waits for the first run)
 
 Order: wait for <RUN1>/phase == "done" -> make sure run 1 is exported (export.py, or wait for an
-export another process is already producing) -> build a separate work dir <W2> (run 1's files are
-only read) -> 4-step probe with a memory gate -> pretraining with the same steps / eval interval /
-LR schedule as run 1 -> at each evaluation the checkpoint is kept as ckpt_<step>.ltc and ranked on
-the 20k test windows (mlmrank), next to run 1's validation CE at the same step -> final ranking of
-pt.ltc and pt.ltc.best -> export.py serves <W2> for EXPORT_HOURS.
+export another process is already producing) -> sweep: each config pretrains in <W2>/sweep_<name>
+with run 1's full schedule (same --steps, eval interval, LR/temperature schedule, data, seed) but
+stops at step SWEEP_STOP (2 evaluations, 1258), so its validation CE is directly comparable with
+run 1's curve at that step; its checkpoint is ranked on the 20k test -> the config with the lowest
+validation CE at SWEEP_STOP wins -> the winner is resumed (--resume is bit-exact: stop+resume gives
+the same checkpoint as an uninterrupted run) in <W2>/long up to the full step count, every
+checkpoint kept as ckpt_<step>.ltc and ranked -> final ranking of pt.ltc / pt.ltc.best -> export.py
+serves <W2>/long plus the sweep logs for EXPORT_HOURS. Run 1's files are only read.
 
-2x = --code-bits 256 --width 2048 (run 1: 128 / 1024), blocks, kernel, cycle, batch, seq, MLM
-targets and seed unchanged: 8.77M parameters vs 4.40M. Memory budget from logic_text.c's
-allocations: training peak (model + optimizer, training and validation work buffers, softmax
-buffer, data load) ~2.1 GB vs ~1.3 GB for run 1, whose heartbeat showed 2.4-2.8 GB including page
-cache; mlmrank on a checkpoint ~0.9 GB; checkpoints ~100 MB each.
+Sweep (run 1 = --code-bits 128 --width 1024 --blocks 16 --depth 3, 4.40M params):
+  w2048      width 2048                 4.86M    b32    blocks 32              4.86M
+  d4         tree depth 4               4.94M    c256   code bits 256          8.31M
+  c256w2048  code bits 256, width 2048  8.77M
+Memory budget from logic_text.c's allocations (model + optimizer, training and validation work
+buffers, softmax buffer, data load; plus a concurrent mlmrank): at most ~2.0 GB training / ~3.0 GB
+with ranking (c256w2048), vs ~1.25 / 1.7 GB for run 1, whose heartbeat showed 2.4-2.8 GB with
+page cache. Checkpoints 50-100 MB.
 
-Safety: the probe aborts if the trainer's peak RSS exceeds PROBE_MAX_GB (6). During the run a
-watchdog kills the trainer (and never anything else) if the RSS of our processes exceeds MEM_ABORT_GB
-(20, a third of the 60 GB limit) or free disk drops below 3 GB; checkpoint copies stop below 8 GB
-free. Nothing in <RUN1> is written. All status lines go to <W2>/logicae.log and the container log:
-  LAE2X ...  (HB every 5 min, "LAE2X CKPT {...}" per checkpoint, "LAE2X RESULT {...}" at the end)
-Env overrides (for tests): RUN1, W2, LAE2X_ARCH, LAE2X_STEPS, LAE2X_EVERY, THREADS, PROBE_MAX_GB,
-MEM_ABORT_GB, EXPORT_HOURS, RUN1_EXPORT_HOURS.
+Safety: a watchdog (every 2 s) stops only the trainer if its peak RSS passes RSS_GATE_GB (6, ~3x the
+budget: the budget was wrong, skip that config), if our processes together pass MEM_ABORT_GB (20, a
+third of the 60 GB limit), or if free disk drops below 3 GB; checkpoint copies stop below 8 GB free.
+A sweep config whose measured speed puts the full run above MAX_LONG_H (16 h) is stopped at its first
+evaluation and is not eligible. Status lines go to <W2>/logicae.log and the container log:
+  LAE2X ...  ("SWEEP {...}" per config, "PICK ...", "CKPT {...}" per long-run checkpoint, HB every
+  5 min, "RESULT {...}" at the end)
+Env overrides (tests): RUN1, W2, LAE2X_SWEEP ("name:args;..."), LAE2X_STEPS, LAE2X_EVERY, SWEEP_STOP,
+THREADS, RSS_GATE_GB, MEM_ABORT_GB, MAX_LONG_H, EXPORT_HOURS, RUN1_EXPORT_HOURS.
 """
 import glob
 import json
@@ -38,9 +46,16 @@ RUN1 = os.environ.get("RUN1", "/root/lae")
 W2 = os.environ.get("W2", "/root/lae2x")
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXPORT_PY = os.path.join(HERE, "export.py") if os.path.exists(os.path.join(HERE, "export.py")) else "/root/lae_export.py"
-ARCH = os.environ.get("LAE2X_ARCH", "--vocab-size 30522 --code-bits 256 --width 2048 --blocks 16 --kernel 5 --cycle 4").split()
+COMMON = "--vocab-size 30522 --kernel 5 --cycle 4"
+SWEEP = os.environ.get("LAE2X_SWEEP", ";".join([
+    f"w2048:{COMMON} --code-bits 128 --width 2048 --blocks 16",
+    f"b32:{COMMON} --code-bits 128 --width 1024 --blocks 32",
+    f"d4:{COMMON} --code-bits 128 --width 1024 --blocks 16 --depth 4",
+    f"c256:{COMMON} --code-bits 256 --width 1024 --blocks 16",
+    f"c256w2048:{COMMON} --code-bits 256 --width 2048 --blocks 16"]))
 T = int(os.environ.get("THREADS", os.cpu_count() or 1))
-PROBE_MAX_GB = float(os.environ.get("PROBE_MAX_GB", 6))
+RSS_GATE_GB = float(os.environ.get("RSS_GATE_GB", 6))
+MAX_LONG_H = float(os.environ.get("MAX_LONG_H", 16))
 MEM_ABORT_GB = float(os.environ.get("MEM_ABORT_GB", 20))
 EXPORT_HOURS = float(os.environ.get("EXPORT_HOURS", 6))
 RUN1_EXPORT_HOURS = float(os.environ.get("RUN1_EXPORT_HOURS", 4))
@@ -138,6 +153,11 @@ def ensure_run1_export():
 
 def watch(proc, extra=(), limit=MEM_ABORT_GB):
     """True if we killed `proc` for memory or disk"""
+    peak = rss(proc.pid, "VmHWM")
+    if peak > RSS_GATE_GB * GB:
+        say(f"ABORT memory gate: trainer peak RSS {peak / GB:.2f} GB > {RSS_GATE_GB} GB (budget ~2 GB); stopping it")
+        proc.send_signal(signal.SIGTERM)
+        return True
     used = rss(proc.pid) + sum(rss(p.pid) for p in extra if p.poll() is None)
     if used > limit * GB:
         say(f"ABORT memory: our processes use {used / GB:.1f} GB > {limit} GB; stopping the trainer")
@@ -167,6 +187,82 @@ def rank(model, threads):
     return rank_result(rank_start(model, threads))
 
 
+def setup_dir(d):
+    os.makedirs(d, exist_ok=True)
+    for f in DATA:
+        if not os.path.lexists(os.path.join(d, f)):
+            os.symlink(os.path.join(RUN1, f), os.path.join(d, f))
+    for b in ("lt", "mlmrank"):
+        shutil.copy(os.path.join(RUN1, b), os.path.join(d, b))
+
+
+def train(d, label, arch, steps, every, stop=None, resume=None, curve1=None, rank_ckpts=False, gate_sps=False):
+    """one pretraining process in directory d under the watchdog; returns a summary dict"""
+    os.chdir(d)
+    P = ["--threads", str(T), "--data", "pre_train.ids", "--val", "pre_val.ids", "--format", "ids", *arch,
+         "--seq", "17", "--batch", "256", "--mlm-targets", "512", "--steps", str(steps), "--eval-every", str(every),
+         "--save", "pt.ltc"]
+    P += ["--resume", resume] if resume else ["--seed", "17"]
+    P += ["--stop-after", str(stop)] if stop else []
+    err = open("current.log", "w")
+    tr = subprocess.Popen(["./lt", "pretrain", *P], stderr=err)
+    say(f"{label}: pretrain started (pid {tr.pid}){' resuming ' + resume if resume else ''}, "
+        f"to step {stop or steps} of {steps}")
+    seen, ranker, pending, killed, why, last_hb, maxrss, last = set(), None, [], False, "", time.time(), 0, None
+    while True:
+        alive = tr.poll() is None
+        if alive and not killed:
+            killed = watch(tr, [ranker[0]] if ranker else ())
+            why = "watchdog" if killed else ""
+            maxrss = max(maxrss, rss(tr.pid, "VmHWM"))
+        for l in open("current.log", errors="replace"):
+            if l.startswith('{"step"') and "val_mlm_ce" in l:
+                e = json.loads(l)
+                if e["step"] not in seen:
+                    seen.add(e["step"])
+                    last = e
+                    sps = e["compute_seconds"] / max(1, e["step"] - (min(seen) - every if resume else 0))
+                    if gate_sps and alive and not killed and steps * sps / 3600 > MAX_LONG_H:
+                        say(f"{label}: {sps:.2f} s/step -> full run {steps * sps / 3600:.1f} h > {MAX_LONG_H} h; "
+                            f"stopping (not eligible)")
+                        tr.send_signal(signal.SIGTERM)
+                        killed, why = True, "too slow"
+                    if rank_ckpts:
+                        ck = f"ckpt_{e['step']}.ltc"
+                        if free_gb(d) > 8:
+                            shutil.copy("pt.ltc", ck + ".tmp")
+                            os.replace(ck + ".tmp", ck)
+                            pending.append((e, ck))
+                        else:
+                            say(f"low disk ({free_gb(d):.1f} GB): step {e['step']} not snapshotted")
+        if ranker is not None and ranker[0].poll() is not None:
+            p, e, ck = ranker
+            ranker = None
+            say("CKPT " + json.dumps({"run": label, "step": e["step"], "val_mlm_ce": e["val_mlm_ce"],
+                                      "run1_val_mlm_ce": (curve1 or {}).get(e["step"]), "test20k": rank_result(p),
+                                      "wall_h": round(e["wall_seconds"] / 3600, 2)}))
+        if ranker is None and pending:
+            e, ck = pending.pop(0)
+            ranker = (rank_start(ck, max(1, T // 2)), e, ck)
+        if time.time() - last_hb > 300:
+            last_hb = time.time()
+            say(f"HB {label} {'training' if alive else 'finished'} | last eval step {max(seen) if seen else 0}/"
+                f"{stop or steps} | trainer RSS {rss(tr.pid) / GB:.2f} GB (peak {maxrss / GB:.2f}) | "
+                f"cgroup {cgroup_mem() / GB:.1f} GB | disk free {free_gb(d):.1f} GB")
+        if not alive and not pending and ranker is None:
+            break
+        time.sleep(2)
+    err.close()
+    tail = open("current.log", errors="replace").read()[-300:] if tr.returncode not in (0, -15) else ""
+    say(f"{label}: exited ({tr.returncode}){' - ' + why if why else ''}; peak trainer RSS {maxrss / GB:.2f} GB"
+        f"{'; ' + tail if tail else ''}")
+    first = min(seen) if seen else 0
+    return {"ok": tr.returncode == 0 and not killed, "why": why or (f"exit {tr.returncode}" if tr.returncode else ""),
+            "last": last, "peak_rss_gb": round(maxrss / GB, 2),
+            "s_per_step": round(last["compute_seconds"] / max(1, last["step"] - (first - every if resume else 0)), 3)
+            if last else None}
+
+
 def main():
     global LOG
     say(f"waiting for run 1 ({RUN1}/phase == done)")
@@ -176,91 +272,59 @@ def main():
 
     os.makedirs(W2, exist_ok=True)
     LOG = os.path.join(W2, "logicae.log")
-    os.chdir(W2)
-    for f in DATA:
-        if not os.path.exists(f):
-            os.symlink(os.path.join(RUN1, f), f)
-    for b in ("lt", "mlmrank"):
-        shutil.copy(os.path.join(RUN1, b), b)
     steps = int(os.environ.get("LAE2X_STEPS", run1_steps()))
     every = int(os.environ.get("LAE2X_EVERY", max(1, steps // 20)))
+    stop = int(os.environ.get("SWEEP_STOP", 2 * every))
     curve1 = run1_curve()
-    P = ["--threads", str(T), "--data", "pre_train.ids", "--val", "pre_val.ids", "--format", "ids", *ARCH,
-         "--seq", "17", "--batch", "256", "--mlm-targets", "512", "--seed", "17"]
-    say(f"setup: {' '.join(ARCH)}; steps {steps}, eval every {every}, threads {T}; "
-        f"disk free {free_gb(W2):.1f} GB; cgroup mem {cgroup_mem() / GB:.1f} GB")
+    configs = [(c.split(":", 1)[0].strip(), c.split(":", 1)[1].split()) for c in SWEEP.split(";") if ":" in c]
+    say(f"setup: {len(configs)} sweep configs to step {stop} of {steps} (eval every {every}), threads {T}; "
+        f"run 1 val CE at {stop}: {curve1.get(stop)}; disk free {free_gb(W2):.1f} GB; cgroup {cgroup_mem() / GB:.1f} GB")
 
-    # probe: 4 steps + one validation pass, peak RSS gate
-    say("probe (4 steps + validation)")
-    with open("probe.log", "w") as err:
-        p = subprocess.Popen(["./lt", "pretrain", *P, "--steps", str(steps), "--stop-after", "4", "--eval-every", "4",
-                              "--save", "probe.ltc"], stderr=err)
-        peak = 0
-        while p.poll() is None:
-            peak = max(peak, rss(p.pid, "VmHWM"))
-            if peak > PROBE_MAX_GB * GB:
-                p.kill()
-                say(f"ABORT probe: peak RSS {peak / GB:.2f} GB > {PROBE_MAX_GB} GB budget; no 2x run")
-                return
-            time.sleep(0.2)
-    m = re.findall(r'"compute_seconds":([0-9.]+)', open("probe.log").read())
-    if p.returncode != 0 or not m:
-        say(f"ABORT probe failed (exit {p.returncode}): {open('probe.log').read()[-400:]}")
-        return
-    sps = float(m[-1]) / 4
-    params = re.search(r"params=(\d+)", open("probe.log").read())
-    say(f"probe ok: {sps:.2f} s/step, peak RSS {peak / GB:.2f} GB, params {params.group(1) if params else '?'}; "
-        f"ETA {steps * sps / 3600:.1f} h")
-    for f in glob.glob("probe.ltc*"):
-        os.remove(f)
+    results = {}
+    for name, arch in configs:
+        d = os.path.join(W2, f"sweep_{name}")
+        setup_dir(d)
+        r = train(d, f"sweep {name}", arch, steps, every, stop=stop, curve1=curve1, gate_sps=True)
+        if r["ok"] and r["last"] and r["last"]["step"] == stop:
+            r["test20k"] = rank("pt.ltc", T)
+        params = re.search(r"params=(\d+)", open("current.log", errors="replace").read())
+        r["params"] = int(params.group(1)) if params else None
+        results[name] = r
+        say("SWEEP " + json.dumps({"config": name, "arch": " ".join(arch), "params": r["params"], "ok": r["ok"],
+                                   "why": r["why"], "val_mlm_ce": r["last"] and r["last"]["val_mlm_ce"],
+                                   "step": r["last"] and r["last"]["step"], "run1_val_mlm_ce": curve1.get(stop),
+                                   "s_per_step": r["s_per_step"],
+                                   "full_run_h": r["s_per_step"] and round(steps * r["s_per_step"] / 3600, 1),
+                                   "peak_rss_gb": r["peak_rss_gb"], "test20k": r.get("test20k")}))
 
-    # main run
-    err = open("current.log", "w")
-    tr = subprocess.Popen(["./lt", "pretrain", *P, "--steps", str(steps), "--eval-every", str(every), "--save", "pt.ltc"],
-                          stderr=err)
-    say(f"pretrain started (pid {tr.pid})")
-    seen, ranker, pending, killed, last_hb, maxrss = set(), None, [], False, 0, 0
-    while True:
-        alive = tr.poll() is None
-        if alive and not killed:
-            killed = watch(tr, [ranker[0]] if ranker else ())
-            maxrss = max(maxrss, rss(tr.pid))
-        for l in open("current.log", errors="replace"):
-            if l.startswith('{"step"') and "val_mlm_ce" in l:
-                d = json.loads(l)
-                if d["step"] not in seen:
-                    seen.add(d["step"])
-                    ck = f"ckpt_{d['step']}.ltc"
-                    if free_gb(W2) > 8:
-                        shutil.copy("pt.ltc", ck + ".tmp")
-                        os.replace(ck + ".tmp", ck)
-                        pending.append((d, ck))
-                    else:
-                        say(f"low disk ({free_gb(W2):.1f} GB): step {d['step']} not snapshotted")
-        if ranker is not None and ranker[0].poll() is not None:
-            p, d, ck = ranker
-            ranker = None
-            say("CKPT " + json.dumps({"step": d["step"], "val_mlm_ce": d["val_mlm_ce"],
-                                      "run1_val_mlm_ce": curve1.get(d["step"]), "test20k": rank_result(p),
-                                      "wall_h": round(d["wall_seconds"] / 3600, 2)}))
-        if ranker is None and pending:
-            d, ck = pending.pop(0)
-            ranker = (rank_start(ck, max(1, T // 2)), d, ck)
-        if time.time() - last_hb > 300:
-            last_hb = time.time()
-            say(f"HB {'training' if alive else 'finished'} | last eval step {max(seen) if seen else 0}/{steps} | "
-                f"trainer RSS {rss(tr.pid) / GB:.2f} GB (max {maxrss / GB:.2f}) | cgroup {cgroup_mem() / GB:.1f} GB | "
-                f"disk free {free_gb(W2):.1f} GB")
-        if not alive and not pending and ranker is None:
-            break
-        time.sleep(2)
-    err.close()
-    say(f"pretrain exited ({tr.returncode}){' after watchdog abort' if killed else ''}; max trainer RSS {maxrss / GB:.2f} GB")
-    for f in ("pt.ltc", "pt.ltc.best"):
-        if os.path.exists(f):
-            say("RESULT " + json.dumps({"model": f"logicae2x-{f}", "test20k": rank(f, T)}))
-    if EXPORT_HOURS > 0:
-        subprocess.run([sys.executable, EXPORT_PY, "--dir", W2, "--hours", str(EXPORT_HOURS)], check=False)
+    ok = {n: r for n, r in results.items() if r["ok"] and r["last"] and r["last"]["step"] == stop}
+    if not ok:
+        say("PICK none: no sweep config finished; no long run")
+    else:
+        win = min(ok, key=lambda n: ok[n]["last"]["val_mlm_ce"])
+        b1 = curve1.get(stop)
+        say("PICK " + win + ": val CE at step " + str(stop) + " " + ", ".join(
+            f"{n} {r['last']['val_mlm_ce']:.4f}" for n, r in sorted(ok.items(), key=lambda x: x[1]["last"]["val_mlm_ce"]))
+            + (f"; run 1 {b1:.4f} ({'beaten' if ok[win]['last']['val_mlm_ce'] < b1 else 'NOT beaten'})" if b1 else ""))
+        d = os.path.join(W2, "long")
+        setup_dir(d)
+        for f in ("pt.ltc", "pt.ltc.best"):
+            src = os.path.join(W2, f"sweep_{win}", f)
+            if os.path.exists(src):
+                shutil.copy(src, os.path.join(d, f))
+        arch = dict(configs)[win]
+        r = train(d, f"long {win}", arch, steps, every, resume="pt.ltc", curve1=curve1, rank_ckpts=True)
+        for f in ("pt.ltc", "pt.ltc.best"):
+            if os.path.exists(f):
+                say("RESULT " + json.dumps({"model": f"logicae-{win}-{f}", "arch": " ".join(arch),
+                                            "test20k": rank(f, T)}))
+        for n in results:  # the sweep logs travel with the export
+            src = os.path.join(W2, f"sweep_{n}", "current.log")
+            if os.path.exists(src):
+                shutil.copy(src, os.path.join(d, f"sweep_{n}.log"))
+        if EXPORT_HOURS > 0:
+            shutil.copy(LOG, os.path.join(d, "logicae.log"))
+            subprocess.run([sys.executable, EXPORT_PY, "--dir", d, "--hours", str(EXPORT_HOURS)], check=False)
     say("done")
 
 
