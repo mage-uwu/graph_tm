@@ -8,6 +8,7 @@ R=$(cd "$(dirname "$0")/../.." && pwd); W=/root/tx
 log(){ echo "TXPOD [$(date -u +%H:%M:%S)] $*" | tee -a /root/txpod.log > /proc/1/fd/1; }
 log "started ($(git -C $R log --oneline -1)); $(nproc) vCPU, $(free -g | awk 'NR==2{print $7}')G RAM available, $(df -h /root | awk 'NR==2{print $4}') disk free"
 export DEBIAN_FRONTEND=noninteractive
+export HF_HUB_ENABLE_HF_TRANSFER=0  # the image turns it on but does not ship hf_transfer
 if ! command -v gcc >/dev/null || ! command -v python3 >/dev/null || ! python3 -m pip --version >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq build-essential python3 python3-pip >/dev/null 2>&1 || log "apt-get FAILED"
 fi

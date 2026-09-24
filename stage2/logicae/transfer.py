@@ -42,6 +42,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 W = os.environ.get("W", "/root/tx")
 BRANCH = os.environ.get("BRANCH", "claude/lucid-ritchie-qtpddj")
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"  # some pod images enable it without installing hf_transfer
 T = int(os.environ.get("THREADS", min(16, os.cpu_count() or 1)))
 FT_STEPS = int(os.environ.get("FT_STEPS", 2000))
 LONG_STEPS = int(os.environ.get("LONG_STEPS", 1500))
