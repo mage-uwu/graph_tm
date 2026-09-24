@@ -190,3 +190,38 @@ So the 0.30 -> 0.57 gap splits into roughly three parts:
 3. **Nonlinear composition, ~0.11** (0.36 -> 0.47): what bert-tiny's layers add over any linear map
    of learned codes. This is the part a TM should supply through clauses and has not yet: on
    random codes it matches the linear readout exactly.
+
+### The output decoder (the largest single piece)
+
+Tying the output to the learned codes does not remove the cap (`output_codes.py`; cap = bert-tiny's
+distribution through the decoder, ridge = linear readout of +-2 learned input codes):
+
+| output code | cap acc@10 | ridge acc@10 |
+|---|---|---|
+| teacher 256 (current) | 0.469 | 0.348 |
+| learned 256, tied | 0.461 | 0.350 |
+| learned 128 = the input codes | 0.445 | 0.335 |
+| learned, continuous decoding (like BERT's tied output) | 0.39-0.42 | 0.25-0.31 |
+
+The decoder already has BERT's form (score = query . code_t). What caps it is the objective: the
+TM trains every output bit independently, so its votes converge to the expected code of the
+plausible tokens (per-output equilibrium cs_k = T (2 P(bit k) - 1)). Same linear model, same input,
+same fixed teacher codes (`query_objective.py`): per-bit regression 0.348, softmax (ranking)
+through the codes **0.418**, unconstrained linear softmax 0.480.
+
+Engine: opt-in `--rank K --neg-table F [--rank-margin M]` (oracle `gtmcore.rank_plan`): feedback
+only on the outputs where the target code and the best of K sampled negative codes differ, with
+the pairwise margin probability. Flat oracle on learned input codes, 750k windows:
+
+| output feedback | acc@1 | acc@10 | MRR | frequent acc@10 |
+|---|---|---|---|---|
+| per-bit (default) | 0.181 | 0.3425 | 0.237 | 0.724 |
+| rank K=16, M=T | 0.117 | 0.222 | 0.153 | 0.429 |
+| rank K=16, M=8T | **0.197** | 0.338 | **0.246** | 0.653 |
+| rank K=16, M=64T | 0.189 | 0.343 | 0.243 | 0.672 |
+| rank K=256, M=8T / 64T | 0.145 / 0.148 | 0.238 / 0.249 | 0.178 / 0.183 | 0.456 / 0.480 |
+
+Pairwise ranking helps the top of the list (acc@1 +1.6, MRR +0.9) but is far from the +7 points
+of the linear softmax, and the hardest negative hurts: it is usually a plausible token (a vs the),
+pushed down on every example, so frequent tokens lose rank. Softmax instead pushes away from the
+model's own expected code, i.e. a negative *sampled* in proportion to the model's current scores.
