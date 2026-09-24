@@ -7,6 +7,8 @@
 #   4.40M params (128-bit word codes 3.91M + 16 blocks x width 1024 gate trees + bias),
 #   time-budgeted steps; then our 20k-window test ranking (same windows / candidates as the
 #   GraphTM and bert-tiny), then SST-2 and QNLI fine-tuning, pretrained vs scratch.
+# Checkpoints: pt.ltc (latest) and pt.ltc.best (best validation CE) are overwritten at every
+# evaluation; the heartbeat also keeps the last 2 step-numbered copies (ckpt_<step>.ltc).
 # Knobs (env): PT_HOURS (2.5), PT_BATCH (256), MLM_CAP (512), FT_STEPS (2000), THREADS (nproc)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -17,8 +19,13 @@ ARCH="--vocab-size 30522 --code-bits 128 --width 1024 --blocks 16 --kernel 5 --c
 exec > >(tee -a $W/logicae.log) 2>&1
 phase(){ echo "$*" > $W/phase; echo "== [$(date -u +%H:%M:%S)] $*"; }
 ( while sleep 30; do  # heartbeat: phase, last training log line, disk, container memory
-    mem=$(awk '{printf "%.1fG", $1/2^30}' /sys/fs/cgroup/memory.current 2>/dev/null)
-    lim=$(awk '{if ($1=="max") print "?"; else printf "%.0fG", $1/2^30}' /sys/fs/cgroup/memory.max 2>/dev/null)
+    mem=$(cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/memory/memory.usage_in_bytes 2>/dev/null | head -1 | awk '{printf "%.1fG", $1/2^30}')
+    lim=$(cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null | head -1 | awk '{if ($1=="max" || $1>2^50) print "?"; else printf "%.0fG", $1/2^30}')
+    if [ -s $W/pt.ltc ] && [ $W/pt.ltc -nt $W/ckpt.stamp ]; then  # rotating snapshots of the latest checkpoint (keep 2)
+      s=$(grep -o '"step":[0-9]*' $W/current.log | tail -1 | cut -d: -f2)
+      cp $W/pt.ltc $W/ckpt_${s:-x}.ltc.tmp && mv $W/ckpt_${s:-x}.ltc.tmp $W/ckpt_${s:-x}.ltc && touch $W/ckpt.stamp
+      ls -t $W/ckpt_*.ltc 2>/dev/null | tail -n +3 | xargs -r rm -f
+    fi
     last=$(tail -n 50 $W/current.log 2>/dev/null | grep '^{"step"' | tail -1 | cut -c1-200)
     echo "HB [$(date -u +%H:%M:%S)] $(cat $W/phase 2>/dev/null) | disk free $(df -h $W | awk 'NR==2{print $4}') | mem $mem/$lim | $last"
   done ) &
