@@ -10,7 +10,8 @@ validation windows, so curves line up with that run.
 Options in the config (not passed to the engine): @ri=K residual init; @rank=K [@margin=M]
 ranking output feedback (engine --rank, negatives from neg_table(), M defaults to T); @windows=N train N windows
 instead of P_COLLAPSE (validation every 1M after 2M); @full=1 then run the proper run's downstream
-half (20k-window test, SST-2 / QNLI / CoNLL adapters, bert-tiny baselines unless @baselines=0).
+half (20k-window test, SST-2 / QNLI / CoNLL adapters, bert-tiny baselines unless @baselines=0);
+@best=1 runs it on the best validated checkpoint; @centre=word adds word-visible adapter features.
 
 Queue: stage2/experiments.tsv, one experiment per line (tab-separated; # comments):
     name <TAB> data env (K=V;K=V or -) <TAB> gtm config
@@ -231,7 +232,7 @@ def run(exp, threads):
         residual_init(model, int(opts["ri"]))
     rank = ["--rank", opts["rank"], "--rank-margin", opts.get("margin", "0"), "--neg-table", neg_table()] \
         if "rank" in opts else []
-    done, train_s = 0, 0.0
+    done, train_s, best_acc = 0, 0.0, -1.0
     ncached, nshards = P_COLLAPSE // SHARD, windows // SHARD
     pending = {}  # shard index -> (Popen, path): the next streamed shard is built while one trains
 
@@ -279,16 +280,22 @@ def run(exp, threads):
             with open(os.path.join(TB, "results.jsonl"), "a") as f:
                 f.write(line + "\n")
             STATE["acc10"] = res["acc@10"]
+            if res["acc@10"] > best_acc:  # the downstream half uses the best validated model (@best=1)
+                best_acc = res["acc@10"]
+                shutil.copy(model, os.path.join(wd, "best.gtmm"))
             if windows > P_COLLAPSE:  # long runs: keep the last two checkpoints to resume from
                 shutil.copy(model, os.path.join(wd, f"ckpt_{done // 1000}k.gtmm"))
                 for old in sorted((f for f in os.listdir(wd) if f.startswith("ckpt_")),
                                   key=lambda f: int(f[5:-6]))[:-2]:
                     os.remove(os.path.join(wd, old))
     if "full" in opts:
-        full(name, env, model, d, threads, opts.get("baselines", "1") == "1")
+        if opts.get("best") == "1" and os.path.exists(os.path.join(wd, "best.gtmm")):
+            model = os.path.join(wd, "best.gtmm")
+            print(f"== {name}: downstream uses the best validated model (acc@10 {best_acc:.4f})", flush=True)
+        full(name, env, model, d, threads, opts.get("baselines", "1") == "1", opts.get("centre", "mask"))
 
 
-def full(name, env, model, d, threads, baselines=True):
+def full(name, env, model, d, threads, baselines=True, centre="mask"):
     """the proper run's downstream half, on the trained model: masked-token test (20k WikiText-103
     test windows, same windows bert-tiny is scored on), then frozen-feature adapters on SST-2 /
     QNLI / CoNLL-2003 next to the lexical baseline and bert-tiny frozen / fine-tuned"""
@@ -297,8 +304,9 @@ def full(name, env, model, d, threads, baselines=True):
     steps = [["eval_mlm.py", "--evalset", t, "--baselines"], ["bert_baselines.py", "mlm", "--evalset", t]] * baselines
     steps += [["eval_mlm.py", "--model", model, "--evalset", t, "--threads", str(threads), "--tag", name + "-test"]]
     for task in ("sst2", "qnli", "conll"):
-        steps += [["adapters.py", "--task", task, "--features", "gtm", "--model", model, "--tag", name, "--threads", str(threads)],
-                  ["adapters.py", "--task", task, "--features", "gtm+bow", "--model", model, "--tag", name, "--threads", str(threads)]]
+        for c in (["mask", "word"] if centre == "word" else ["mask"]):  # word models: both views
+            steps += [["adapters.py", "--task", task, "--features", f, "--model", model, "--tag", f"{name}-{c}",
+                       "--threads", str(threads), "--centre", c] for f in ("gtm", "gtm+bow")]
         steps += [["adapters.py", "--task", task, "--features", "bow", "--tag", name + "-lexical", "--threads", str(threads)],
                   ["bert_baselines.py", "task", "--task", task, "--mode", "frozen"],
                   ["bert_baselines.py", "task", "--task", task, "--mode", "finetune"]] * baselines

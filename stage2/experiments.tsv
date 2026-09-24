@@ -63,6 +63,9 @@
 # North star (what works best and stays efficient): learned co-occurrence input codes (GTM_CODES=dist,
 # +3.4 acc@10 at zero cost) on the best graph config; full protocol (10M, test20k, adapters, bert-tiny).
 N1_R4b_dist_full	GTM_DISTS=1,2;GTM_CODES=dist	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=10000000 @full=1
+# The word itself in the features: BERT's 80/10/10 centre policy in pretraining, adapters with the word
+# visible (and masked, for comparison); 2M windows (N1 peaked at 1.5M), best checkpoint downstream.
+N5_R4b_dist_bert_word	GTM_DISTS=1,2;GTM_CODES=dist;GTM_MASK_POLICY=bert	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=2000000 @full=1 @best=1 @centre=word @baselines=0
 # same with ranking output feedback (K=16, M=8T: best acc@1/MRR in the flat test), and the flat oracle pair
 N2_R4b_dist_rank	GTM_DISTS=1,2;GTM_CODES=dist	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @rank=16 @margin=400000
 N3_flat_dist	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2;GTM_CODES=dist	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078

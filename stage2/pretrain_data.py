@@ -104,7 +104,11 @@ def build(split, n, seed, out, codes, mask_id, rows, seqs=None, lens=None):
         true = wt[:, C.WIN]
         C.write_gtmd(out, h, 1, 1, N_BITS, 1, npg, epn, edges, X, codes[true], nt)
         return true, wt
-    npg, epn, edges, X, nt, wt = C.window_graphs(seqs, cent, mask_id, rows)
+    cid = None
+    if C.MASK_POLICY == "bert" and split == "train":  # evaluation windows stay fully masked
+        _, _, _, _, _, wt0 = C.window_graphs(seqs, cent, None, rows[:, :1])
+        cid = C.centre_policy(wt0[:, C.WIN], mask_id, seed, np.load(os.path.join(C.DATA, "teacher.npz"))["candidates"])
+    npg, epn, edges, X, nt, wt = C.window_graphs(seqs, cent, mask_id, rows, centre_ids=cid)
     true = wt[:, C.WIN]
     C.write_gtmd(out, C.H, C.N_NODE_TYPES, C.N_EDGE_TYPES, N_BITS, 1, npg, epn, edges, X, codes[true], nt)
     return true, wt

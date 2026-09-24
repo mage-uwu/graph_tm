@@ -190,12 +190,24 @@ def write_gtmd(path, h, n_node_types, n_edge_types, n_outputs, kind, npg, epn, e
             f.write(np.ascontiguousarray(a, dtype=dt).tobytes())
 
 
-def window_graphs(seqs, centres, mask_id, rows, win=WIN):
+def centre_policy(true, mask_id, seed, cand):
+    """centre token shown to the model for each training window (GTM_MASK_POLICY=bert): BERT's
+    80/10/10 -- [MASK] 80%, a random real token 10%, the true token 10% -- so centre clauses learn
+    to use the word when it is visible (downstream features show it). Deterministic in seed."""
+    rng = np.random.default_rng([seed, 8010])
+    u = rng.random(len(true))
+    return np.where(u < 0.8, mask_id, np.where(u < 0.9, rng.choice(cand, len(true)), true)).astype(np.int32)
+
+
+MASK_POLICY = os.environ.get("GTM_MASK_POLICY", "mask")  # mask: centre always [MASK]; bert: 80/10/10
+
+
+def window_graphs(seqs, centres, mask_id, rows, win=WIN, centre_ids=None):
     """Build window graphs.
 
     seqs:    list of int32 token arrays (paragraphs / sentences)
     centres: (N, 2) int array of (sequence index, position); the centre token is replaced by
-             [MASK] when mask_id is not None
+             [MASK] when mask_id is not None, or by centre_ids (N,) when given
     rows:    (V, W) packed literal rows from symbol_rows
     Returns (npg, epn, edges, X, node_type, window_tokens) where window_tokens is (N, 2*win+1)
     int32 of the ORIGINAL tokens (-1 = outside the sequence) and the centre sits at column win."""
@@ -210,7 +222,9 @@ def window_graphs(seqs, centres, mask_id, rows, win=WIN):
     ok = (p >= 0) & (p < lens[si][:, None])
     wt = np.where(ok, flat[np.clip(offs[si][:, None] + p, 0, max(len(flat) - 1, 0))], -1).astype(np.int32)
     toks = wt.copy()
-    if mask_id is not None:
+    if centre_ids is not None:
+        toks[:, win] = centre_ids
+    elif mask_id is not None:
         toks[:, win] = mask_id
     # nodes = valid window cells, in order; local index = column - first valid column
     first = ok.argmax(1)

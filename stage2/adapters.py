@@ -3,8 +3,9 @@ Downstream adapters on a FROZEN pretrained GraphTM.
 
 Features (binary):
   gtm   clause-output bits of the pretrained model (`gtm score --bits`).
-          sentence tasks: one window graph per token with that token masked (the model's
-          contextual prediction at every position), OR-pooled over the sentence.
+          sentence tasks: one window graph per token, OR-pooled over the sentence. --centre mask
+          hides the token (the model's contextual prediction at every position); --centre word
+          shows it (word + context, as BERT's features; needs GTM_MASK_POLICY=bert pretraining).
           qnli: [pool(question), pool(sentence), pool(question) AND pool(sentence)].
           conll: the graph that masks the word's first piece (context only, no identity).
   bow   hashed token ids: bag of the sentence (sst2), [bag(q), bag(s), bag(q) AND bag(s)] (qnli),
@@ -40,8 +41,12 @@ LOGREG_C = (0.01, 0.1, 1.0)
 
 
 # ---------------------------------------------------------------- features
+CENTRE = "mask"  # --centre: mask (context only: "what fits here") | word (word + context, like BERT)
+
+
 def gtm_bits(model, seqs, centres, threads, tag):
-    """packed clause bits (N, Cw) for window graphs with the centre token masked"""
+    """packed clause bits (N, Cw) for window graphs; the centre token is masked (--centre mask)
+    or shown (--centre word, for models pretrained with GTM_MASK_POLICY=bert)"""
     t = np.load(os.path.join(C.DATA, "teacher.npz"))
     mask_id = int(np.nonzero(t["vocab"] == "[MASK]")[0][0])
     rows = C.symbol_rows(len(t["codes"]), mask_id=mask_id)
@@ -50,7 +55,7 @@ def gtm_bits(model, seqs, centres, threads, tag):
     out = []
     for i in range(0, len(centres), CHUNK):
         c = centres[i:i + CHUNK]
-        npg, epn, edges, X, nt, _ = C.window_graphs(seqs, c, mask_id, rows)
+        npg, epn, edges, X, nt, _ = C.window_graphs(seqs, c, mask_id if CENTRE == "mask" else None, rows)
         p = os.path.join(C.DATA, f"_feat_{tag}.gtmd")
         C.write_gtmd(p, C.H, C.N_NODE_TYPES, C.N_EDGE_TYPES, n_out, 1, npg, epn, edges, X,
                      np.zeros((len(c), n_out), np.int32), nt)
@@ -61,7 +66,7 @@ def gtm_bits(model, seqs, centres, threads, tag):
 
 
 def pooled(model, seqs, threads, tag):
-    """OR over the per-position masked graphs of each sequence -> (n_seqs, C) bool"""
+    """OR over the per-position graphs of each sequence -> (n_seqs, C) bool"""
     lens = np.array([len(s) for s in seqs])
     assert (lens > 0).all()
     centres = np.stack([np.repeat(np.arange(len(seqs)), lens), np.concatenate([np.arange(l) for l in lens])], 1)
@@ -192,7 +197,11 @@ def main():
     ap.add_argument("--heads", default="logreg,tm")
     ap.add_argument("--threads", type=int, default=os.cpu_count())
     ap.add_argument("--limit", type=int, default=0, help="smoke test: first N train/dev/test sequences")
+    ap.add_argument("--centre", choices=["mask", "word"], default="mask",
+                    help="word: show the token at each position (word + context), for GTM_MASK_POLICY=bert models")
     a = ap.parse_args()
+    global CENTRE
+    CENTRE = a.centre
     D = TK.load(a.task)
     if a.limit:
         D = {s: {k: v[:a.limit] for k, v in d.items()} for s, d in D.items()}
