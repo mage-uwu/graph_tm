@@ -54,20 +54,21 @@ B1_blt_d2_s10	GTM_LAYOUT=blt;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T
 # second hop carries almost nothing. Bound specificity: literal budget (--max-inc) or a stronger
 # layer-0 forget (low layer-0 s).
 L5_d3_layered_ri64_maxinc32	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 32 @ri=64
+# (_r: re-queued after the pod disk filled at 23:5x and these failed on ENOSPC)
 # Proper run (user: "measure how close that takes us to the proper run"): the first run's full
 # protocol -- 10M windows, 20k test windows, SST-2 / QNLI / CoNLL adapters vs bert-tiny -- on the
 # best depth-2 config (R4b) and the stabilised depth-3 config (L2, layered forget + residual init).
-F1_R4b_full	GTM_DISTS=1,2	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=10000000 @full=1
-F2_L2_full	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64 @windows=10000000 @full=1 @baselines=0
+F1_R4b_full_r	GTM_DISTS=1,2	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=10000000 @full=1
+F2_L2_full_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64 @windows=10000000 @full=1 @baselines=0
 L6_d3_layered_ri64_maxinc16	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 16 @ri=64
 L9_d3_layered_ri64_maxinc8	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 8 @ri=64
-L7_d3_layered_ri64_s2.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 2,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
-L8_d3_layered_ri64_s3.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 3,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
+L7_d3_layered_ri64_s2.5.5_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 2,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
+L8_d3_layered_ri64_s3.5.5_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 3,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
 B2_blt_flat_oracle	GTM_LAYOUT=blt_flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
 B3_tokhash_d2_s10	GTM_LAYOUT=tokhash;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
-R4e_d3_c1728_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
-R4f_d2_s10_maxinc4096	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
-R4g_d3_c1728_ri64_maxinc4096	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096 @ri=64
+R4e_d3_c1728_maxinc4096_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+R4f_d2_s10_maxinc4096_r	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+R4g_d3_c1728_ri64_maxinc4096_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096 @ri=64
 R3c_d2_ms1024_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 2 --msg-size 1024 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3d_d2_ms512_mb1_d12_s10	GTM_DISTS=1,2	--clauses 2880 --s 10.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
 R3e_flat8_oracle_c1000	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-8:-7:-6:-5:-4:-3:-2:-1:1:2:3:4:5:6:7:8	--clauses 1000 --s 5.0 --depth 1 --T 50000 --q -1 --rho 0.0078

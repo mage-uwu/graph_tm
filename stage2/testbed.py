@@ -67,12 +67,12 @@ def py(args, env):
     return r.stdout
 
 
-def ensure_data(env, windows=P_COLLAPSE, test=False):
+def ensure_data(env, test=False):
     d = os.path.join(TB, "data", data_key(env))
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "lock"), "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
-        for i in range(1, windows // SHARD + 1):
+        for i in range(1, P_COLLAPSE // SHARD + 1):
             p = os.path.join(d, f"s{i}.gtmd")
             if not os.path.exists(p):
                 py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i),
@@ -155,6 +155,7 @@ def run(exp, threads):
     wd = os.path.join(TB, "runs", name)
     shutil.rmtree(wd, ignore_errors=True)
     os.makedirs(wd)
+    open(os.path.join(wd, "RUNNING"), "w").close()  # gc keeps this run's data
     rev = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=C.ROOT, capture_output=True, text=True).stdout.strip()
     gtm = os.path.join(wd, "gtm")
     shutil.copy(C.GTM, gtm)  # the sync loop may rebuild stage1/gtm while we run
@@ -162,7 +163,9 @@ def run(exp, threads):
     opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
     windows = int(float(opts.get("windows", P_COLLAPSE)))
     eval_at = set(EVAL_AT) | set(range(P_COLLAPSE, windows + 1, 1_000_000))
-    d = ensure_data(env, windows, test="full" in opts)
+    d = ensure_data(env, test="full" in opts)
+    if "full" in opts:
+        deps()
     print(f"== [{time.strftime('%H:%M:%S')}] {name}: data {data_key(env)} ready ({time.time() - t0:.0f}s), "
           f"cfg {' '.join(exp['cfg'])}, engine {rev}", flush=True)
     model = os.path.join(wd, "m.gtmm")
@@ -173,10 +176,16 @@ def run(exp, threads):
         residual_init(model, int(opts["ri"]))
     done, train_s = 0, 0.0
     for i in range(1, windows // SHARD + 1):
+        shard = os.path.join(d, f"s{i}.gtmd")
+        if i > P_COLLAPSE // SHARD:  # beyond the cached shards: stream one at a time (~590 MB each)
+            shard = os.path.join(wd, "shard.gtmd")
+            py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i), "--out", shard], env)
         t1 = time.time()
-        subprocess.run([gtm, "train", "--data", os.path.join(d, f"s{i}.gtmd"), "--model", model, "--epochs", "1",
+        subprocess.run([gtm, "train", "--data", shard, "--model", model, "--epochs", "1",
                         "--threads", str(threads), "--save", model], check=True, capture_output=True)
         dt = time.time() - t1
+        if shard.startswith(wd):
+            os.remove(shard)
         train_s += dt
         done += SHARD
         if done in eval_at:
@@ -229,6 +238,36 @@ def full(name, env, model, d, threads, baselines=True):
                     f.write(json.dumps(dict(json.loads(l[7:]), exp=name)) + "\n")
 
 
+def deps():
+    """the downstream half needs torch / transformers / scikit-learn (the testbed image has none)"""
+    try:
+        import sklearn, torch, transformers  # noqa: F401
+    except ImportError:
+        pip = [sys.executable, "-m", "pip", "install", "-q", "--break-system-packages"]
+        subprocess.run(pip + ["--index-url", "https://download.pytorch.org/whl/cpu", "torch"], check=True)
+        subprocess.run(pip + ["transformers", "scikit-learn"], check=True)
+
+
+def gc(q):
+    """free disk (8 cached shards are ~4.7 GB per data env): drop cached data of every data env
+    that no pending or running experiment uses, and shards beyond the cached range"""
+    keep = set()
+    for e in q:
+        if not os.path.exists(os.path.join(TB, "claimed", e["name"])) or \
+                os.path.exists(os.path.join(TB, "runs", e["name"], "RUNNING")):
+            keep.add(data_key(e["env"]))
+    root = os.path.join(TB, "data")
+    for k in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        d = os.path.join(root, k)
+        if k not in keep:
+            shutil.rmtree(d, ignore_errors=True)
+            print(f"== gc: removed data {k}", flush=True)
+            continue
+        for f in os.listdir(d):
+            if f.startswith("s") and f[1:].split(".")[0].isdigit() and int(f[1:].split(".")[0]) > P_COLLAPSE // SHARD:
+                os.remove(os.path.join(d, f))
+
+
 def claim(name):
     os.makedirs(os.path.join(TB, "claimed"), exist_ok=True)
     try:
@@ -247,15 +286,26 @@ def main():
     q = queue()
     if a.cmd == "run":
         return run(next(e for e in q if e["name"] == a.name), a.threads)
-    for e in q:
-        if claim(e["name"]):
-            try:
-                run(e, a.threads)
-                print(f"== [{time.strftime('%H:%M:%S')}] {e['name']}: done", flush=True)
-            except Exception as ex:  # keep the worker alive; the failure is in the log
-                print(f"== {e['name']}: FAILED {ex}", flush=True)
-            return
-    sys.exit(3)
+    os.makedirs(TB, exist_ok=True)
+    with open(os.path.join(TB, "gc.lock"), "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        gc(q)
+        mine = next((e for e in q if claim(e["name"])), None)
+        if mine:
+            os.makedirs(os.path.join(TB, "runs", mine["name"]), exist_ok=True)
+            open(os.path.join(TB, "runs", mine["name"], "RUNNING"), "w").close()
+    if mine is None:
+        sys.exit(3)
+    try:
+        run(mine, a.threads)
+        print(f"== [{time.strftime('%H:%M:%S')}] {mine['name']}: done", flush=True)
+    except Exception as ex:  # keep the worker alive; the failure is in the log
+        print(f"== {mine['name']}: FAILED {str(ex)[-3000:]}", flush=True)
+    finally:
+        try:
+            os.remove(os.path.join(TB, "runs", mine["name"], "RUNNING"))
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
