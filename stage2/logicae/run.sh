@@ -1,6 +1,7 @@
 #!/bin/bash
-# LogicAE run: logic-bert (DDLGN) at our scale on our task, on a pod. Expects the logic-bert
-# source at $LB/src/logic_text.c (shipped outside this repo). Prints a HB line every 30 s and
+# LogicAE run: logic-bert (DDLGN) at our scale on our task, on a pod. The logic-bert source is
+# not in this repo: after data prep the script waits until $LB/src/logic_text.c exists (copy it
+# onto the pod), then builds and runs. Prints a HB line every 30 s and
 # RESULT {json} lines; everything also goes to $W/logicae.log.
 #   masked-token pretraining on WikiText-103 +-8-token windows (bert WordPiece, V=30522),
 #   4.40M params (128-bit word codes 3.91M + 16 blocks x width 1024 gate trees + bias),
@@ -25,13 +26,16 @@ HB=$!; trap 'kill $HB 2>/dev/null' EXIT
 phase "setup"
 python3 -c "import tokenizers, pyarrow, safetensors, huggingface_hub" 2>/dev/null ||
   python3 -m pip install -q --break-system-packages tokenizers pyarrow safetensors huggingface_hub
-gcc -O3 -march=native -std=c11 -fopenmp -Wno-unknown-pragmas $LB/src/logic_text.c -lm -o $W/lt
-gcc -O3 -march=native -std=c11 -fopenmp -Wno-unknown-pragmas -I$LB/src logicae/mlmrank.c -lm -o $W/mlmrank
-OMP_NUM_THREADS=$T $W/lt selftest | tail -1
 phase "data prep"
 python3 pretrain_data.py prep
 [ -f ../data/stage2/test20k.gtmd.npz ] || python3 pretrain_data.py evalset --split test --n 20000 --out ../data/stage2/test20k.gtmd
 [ -f $W/pre_train.ids ] || python3 logicae/prep.py $W --n ${PREP_N:-3000000}
+phase "waiting for the logic-bert source at $LB/src/logic_text.c (copy it onto the pod)"
+until [ -s $LB/src/logic_text.c ]; do sleep 20; done; sleep 5
+phase "build"
+gcc -O3 -march=native -std=c11 -fopenmp -Wno-unknown-pragmas $LB/src/logic_text.c -lm -o $W/lt
+gcc -O3 -march=native -std=c11 -fopenmp -Wno-unknown-pragmas -I$LB/src logicae/mlmrank.c -lm -o $W/mlmrank
+OMP_NUM_THREADS=$T $W/lt selftest | tail -1
 cd $W
 P="--threads $T --data pre_train.ids --val pre_val.ids --format ids $ARCH --seq 17 --batch $PT_BATCH --mlm-targets $MLM_CAP --seed 17"
 phase "throughput probe"
