@@ -225,3 +225,32 @@ Pairwise ranking helps the top of the list (acc@1 +1.6, MRR +0.9) but is far fro
 of the linear softmax, and the hardest negative hurts: it is usually a plausible token (a vs the),
 pushed down on every example, so frequent tokens lose rank. Softmax instead pushes away from the
 model's own expected code, i.e. a negative *sampled* in proportion to the model's current scores.
+
+## Long run N1: learned codes + R4b, 10M windows (full protocol)
+
+`N1_R4b_dist_full` (`GTM_CODES=dist`, R4b depth 2, 10M windows, 16 threads). Validation peaked at
+0.3166 (1.5M windows) and drifted to 0.3047 by 10M: no collapse, and no further climb.
+Test sets as in the first run; frozen features, logistic head (TM head in brackets).
+
+| | masked token (test20k) acc@1 / acc@10 / MRR | SST-2 acc | QNLI acc | CoNLL entity F1 |
+|---|---|---|---|---|
+| first full run (random codes, depth 3) | - / 0.2235 / - | 0.536 | - | - |
+| unigram / bag of words | 0.064 / 0.2755 / 0.128 | 0.787 (0.654) | 0.769 (0.652) | 0.470 (0.296) |
+| **N1 GraphTM** | **0.152 / 0.3049 / 0.204** | 0.609 (0.617) | 0.633 (0.578) | 0.345 (0.278) |
+| N1 GraphTM + bag of words | | 0.745 (0.695) | 0.721 (0.605) | step failed |
+| bert-tiny frozen | 0.300 / 0.5664 / 0.391 | 0.731 | 0.646 | 0.588 |
+| bert-tiny fine-tuned | | 0.804 | 0.754 | 0.809 |
+
+- The masked-token metric improved on the first run (+8.1 points acc@10) and beats unigram by 2.9.
+  It is still 26 points behind bert-tiny.
+- Downstream, N1 narrows the first run's SST-2 gap to bag of words from 25 to 18 points, but it
+  stays below bag of words on every task. Adding its features to bag of words lowers the score (joint
+  logistic, one C).
+- bert-tiny frozen beats bag of words only on CoNLL. Fine-tuned, it leads by 1.7 on SST-2 and 34 on
+  CoNLL, and trails bag of words by 1.5 on QNLI.
+- CoNLL gtm+bow failed after 21 min with no traceback in the log (only lbfgs convergence
+  warnings). The cause is not recorded.
+
+N5 (80/10/10 centre policy, 2M windows, best checkpoint) tests at 0.1515 / 0.3048 / 0.204, the
+same as N1 at a fifth of the windows. Its SST-2 score with masked-centre features is 0.617, also
+about the same.
