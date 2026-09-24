@@ -1,6 +1,6 @@
 #!/bin/bash
 # LogicAE transfer diagnostics on the playground pod (AUTIST_ENGINEER_PLAYGROUND). Paste-once:
-#   (command -v git >/dev/null || (apt-get update -qq && apt-get install -y -qq git)) && rm -rf /root/txrepo && git clone -q -b claude/lucid-ritchie-qtpddj https://github.com/mage-uwu/graph_tm /root/txrepo && setsid nohup bash /root/txrepo/stage2/logicae/transfer.sh > /root/tx.out 2>&1 < /dev/null &
+#   (command -v git >/dev/null || (apt-get update -qq && apt-get install -y -qq git)) && rm -rf /root/txrepo && git clone -q --depth 1 -b claude/lucid-ritchie-qtpddj https://github.com/mage-uwu/graph_tm /root/txrepo && setsid nohup bash /root/txrepo/stage2/logicae/transfer.sh > /root/tx.out 2>&1 < /dev/null &
 # Installs build tools + python deps if missing, runs transfer.py (waits for models/logicae/pt.ltc
 # on the branch), then exports results.jsonl, transfer.log and the hardened models (6 h on :8888).
 set -uo pipefail

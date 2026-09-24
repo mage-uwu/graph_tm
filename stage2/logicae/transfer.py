@@ -27,6 +27,7 @@ Disk (5 GB pod): per-run checkpoints are deleted after evaluation.
   python3 transfer.py   (from a clone of the branch; env W, BRANCH, THREADS, FT_STEPS, LONG_STEPS, ONLY)
 """
 import hashlib
+import io
 import json
 import os
 import re
@@ -94,6 +95,64 @@ def build():
     say(f"build: {r.stdout.strip().splitlines()[-1] if r.stdout else r.stderr[-200:]}")
 
 
+class _HTTPRange(io.RawIOBase):
+    """read-only seekable file over HTTP Range requests: pyarrow pulls only the row groups it reads"""
+
+    def __init__(self, url):
+        import urllib.request
+        self.req = urllib.request
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as r:
+            self.url, self.size = r.geturl(), int(r.headers["Content-Length"])  # final (CDN) URL
+        self.pos = 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, off, whence=0):
+        self.pos = off if whence == 0 else self.pos + off if whence == 1 else self.size + off
+        return self.pos
+
+    def readinto(self, b):
+        n = min(len(b), self.size - self.pos)
+        if n <= 0:
+            return 0
+        for attempt in range(5):
+            try:
+                rq = self.req.Request(self.url, headers={"Range": f"bytes={self.pos}-{self.pos + n - 1}"})
+                with self.req.urlopen(rq, timeout=120) as r:
+                    data = r.read()
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(2 ** attempt)
+        b[:len(data)] = data
+        self.pos += len(data)
+        return len(data)
+
+
+def stream_paragraphs(repo, fname, npara):
+    """WikiText paragraphs streamed from the Hub (no local copy: the pod's disk is small), first npara"""
+    import pyarrow.parquet as pq
+    url = f"https://huggingface.co/datasets/{repo}/resolve/main/{fname}"
+    f = io.BufferedReader(_HTTPRange(url), buffer_size=8 << 20)
+    paras = []
+    with f, pq.ParquetFile(f) as pf:
+        for batch in pf.iter_batches(batch_size=50_000, columns=["text"]):
+            paras += [x.strip() for x in batch.column(0).to_pylist() if x.strip() and not x.strip().startswith("=")]
+            if len(paras) >= npara:
+                break
+    size = f.raw.size
+    say(f"data: streamed {min(len(paras), npara)} paragraphs of {fname} ({size >> 20} MB file)")
+    return paras[:npara]
+
+
 def data():
     """run 1's exact task splits (tasks.py is seeded) + 129-token WikiText-103 windows"""
     sys.path.insert(0, os.path.join(REPO, "stage2"))
@@ -111,23 +170,17 @@ def data():
             P.write_ids(os.path.join(W, f"{task}_{split}.ids"), d["y"], rows)
         say(f"data: {task} splits written")
     if not os.path.exists(os.path.join(W, "long_train.ids")) and (not ONLY or any(x.startswith("long") for x in ONLY)):
-        import pyarrow.parquet as pq
         import pretrain_data as PD
         tok = C.tokenizer()
         P.WIN = 64  # 129-token windows, PAD outside the paragraph (prep.py's sampler)
         for split, fname, npara, n, seed in (("train", PD.SPLIT_FILES["train"][0], 300_000, 100_000, 11),
                                              ("val", PD.SPLIT_FILES["validation"][0], 10**9, 2000, 12)):
-            lines = pq.read_table(C.fetch(PD.WIKI, fname)).column("text").to_pylist()
-            paras = [x.strip() for x in lines if x.strip() and not x.strip().startswith("=")][:npara]
+            paras = stream_paragraphs(PD.WIKI, fname, npara)
             ids = [a for a in C.encode(tok, paras) if len(a) >= 2]
             flat, lens = np.concatenate(ids).astype(np.int64), np.array([len(a) for a in ids], np.int64)
             Wn = P.windows(flat, lens, n, seed)
             assert not ((Wn == 1) | (Wn == 2)).any(), "reserved ids in text"
             P.write_ids(os.path.join(W, f"long_{split}.ids"), -np.ones(len(Wn), np.int64), Wn)
-        hf = os.path.join(C.DATA, "hf")  # the 5 GB disk: drop the WikiText parquet cache
-        for d in os.listdir(hf) if os.path.isdir(hf) else []:
-            if "wikitext" in d:
-                shutil.rmtree(os.path.join(hf, d), ignore_errors=True)
         say("data: 100k + 2k 129-token windows written")
 
 
