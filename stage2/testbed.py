@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import numpy as np
@@ -41,6 +42,39 @@ TB = os.path.join(C.DATA, "tb")
 if os.environ.get("TB_SMOKE"):  # tiny end-to-end check of the harness
     P_COLLAPSE, SHARD, EVAL_AT, TB = 10_000, 5_000, (5_000, 10_000), os.path.join(C.DATA, "tb_smoke")
 QUEUE = os.path.join(C.HERE, "experiments.tsv")
+
+
+HEARTBEAT_S = float(os.environ.get("TB_HEARTBEAT_S", 30))
+STATE = {}  # what the running experiment is doing; the heartbeat thread prints it
+
+
+def phase(**kw):
+    STATE.update(kw, since=time.time())
+
+
+def heartbeat():
+    """every HEARTBEAT_S seconds one HB line on stdout (the pod log) and in TB/heartbeat.txt:
+    experiment, phase, progress, last throughput, time in phase, disk / memory / load. A run
+    that dies stops producing them; a stuck one shows its phase time growing."""
+    while True:
+        time.sleep(HEARTBEAT_S)
+        if not STATE:
+            continue
+        du = shutil.disk_usage(TB)
+        mem = next((int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith("MemAvailable")), 0)
+        st = dict(STATE)
+        line = (f"HB [{time.strftime('%H:%M:%S')}] {st.get('exp')} {st.get('phase')} "
+                f"| {st.get('done', 0) / 1e6:.2f}M/{st.get('total', 0) / 1e6:.2f}M windows"
+                f"{' | last ' + str(st['ex_s']) + ' ex/s' if st.get('ex_s') else ''}"
+                f"{' | val acc@10 ' + format(st['acc10'], '.4f') if st.get('acc10') is not None else ''}"
+                f" | in phase {time.time() - st['since']:.0f}s | up {(time.time() - st['t0']) / 60:.1f}m"
+                f" | disk free {du.free / 2**30:.1f}G | mem avail {mem / 2**20:.1f}G | load {os.getloadavg()[0]:.1f}")
+        print(line, flush=True)
+        try:
+            with open(os.path.join(TB, "heartbeat.txt"), "w") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
 
 
 def queue():
@@ -76,14 +110,17 @@ def ensure_data(env, test=False):
         for i in range(1, P_COLLAPSE // SHARD + 1):
             p = os.path.join(d, f"s{i}.gtmd")
             if not os.path.exists(p):
+                phase(phase=f"data: cached shard {i}/{P_COLLAPSE // SHARD}")
                 py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i),
                     "--out", p + ".tmp"], env)
                 os.replace(p + ".tmp", p)
         v = os.path.join(d, "val.gtmd")
         if not os.path.exists(v + ".npz"):
+            phase(phase="data: validation set")
             py(["pretrain_data.py", "evalset", "--split", "validation", "--n", "10000", "--out", v], env)
         t = os.path.join(d, "test20k.gtmd")
         if test and not os.path.exists(t + ".npz"):
+            phase(phase="data: 20k test set")
             py(["pretrain_data.py", "evalset", "--split", "test", "--n", "20000", "--out", t], env)
     return d
 
@@ -177,6 +214,9 @@ def run(exp, threads):
     t0 = time.time()
     opts = dict(a[1:].split("=", 1) for a in exp["cfg"] if a.startswith("@"))
     windows = int(float(opts.get("windows", P_COLLAPSE)))
+    STATE.clear()
+    STATE.update(exp=name, total=windows, done=0, t0=time.time())
+    phase(phase="setup")
     eval_at = set(EVAL_AT) | set(range(P_COLLAPSE, windows + 1, 1_000_000))
     if "full" in opts or env.get("GTM_CODES") == "dist":
         deps()  # adapters / bert baselines, and the learned codes' SVD (scikit-learn)
@@ -192,11 +232,27 @@ def run(exp, threads):
     rank = ["--rank", opts["rank"], "--rank-margin", opts.get("margin", "0"), "--neg-table", neg_table()] \
         if "rank" in opts else []
     done, train_s = 0, 0.0
-    for i in range(1, windows // SHARD + 1):
+    ncached, nshards = P_COLLAPSE // SHARD, windows // SHARD
+    pending = {}  # shard index -> (Popen, path): the next streamed shard is built while one trains
+
+    def stream(j):
+        if ncached < j <= nshards and j not in pending:
+            out = os.path.join(wd, f"stream{j}.gtmd")
+            pending[j] = (subprocess.Popen([sys.executable, "pretrain_data.py", "shard", "--split", "train",
+                                            "--n", str(SHARD), "--seed", str(j), "--out", out], cwd=C.HERE,
+                                           env=dict(os.environ, **env), stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.PIPE, text=True), out)
+
+    for i in range(1, nshards + 1):
         shard = os.path.join(d, f"s{i}.gtmd")
-        if i > P_COLLAPSE // SHARD:  # beyond the cached shards: stream one at a time (~590 MB each)
-            shard = os.path.join(wd, "shard.gtmd")
-            py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i), "--out", shard], env)
+        stream(i)  # beyond the cached shards (~590 MB each): streamed, prefetched one ahead
+        if i in pending:
+            proc, shard = pending.pop(i)
+            phase(phase=f"data: stream shard {i}/{nshards}")
+            if proc.wait() != 0:
+                raise RuntimeError(f"shard {i} failed:\n{proc.stderr.read()}")
+        stream(i + 1)
+        phase(phase=f"train shard {i}/{nshards}")
         t1 = time.time()
         subprocess.run([gtm, "train", "--data", shard, "--model", model, "--epochs", "1",
                         "--threads", str(threads), "--save", model] + rank, check=True, capture_output=True)
@@ -205,7 +261,9 @@ def run(exp, threads):
             os.remove(shard)
         train_s += dt
         done += SHARD
+        STATE.update(done=done, ex_s=round(SHARD / dt))
         if done in eval_at:
+            phase(phase=f"validation @{done // 1000}k")
             out = py(["eval_mlm.py", "--model", model, "--evalset", os.path.join(d, "val.gtmd"), "--threads",
                       str(threads), "--tag", name], dict(env, GTM_STAGE2_DATA=C.DATA))
             res = json.loads([l for l in out.splitlines() if l.startswith("RESULT ")][0][7:])
@@ -220,6 +278,12 @@ def run(exp, threads):
                   flush=True)
             with open(os.path.join(TB, "results.jsonl"), "a") as f:
                 f.write(line + "\n")
+            STATE["acc10"] = res["acc@10"]
+            if windows > P_COLLAPSE:  # long runs: keep the last two checkpoints to resume from
+                shutil.copy(model, os.path.join(wd, f"ckpt_{done // 1000}k.gtmm"))
+                for old in sorted((f for f in os.listdir(wd) if f.startswith("ckpt_")),
+                                  key=lambda f: int(f[5:-6]))[:-2]:
+                    os.remove(os.path.join(wd, old))
     if "full" in opts:
         full(name, env, model, d, threads, opts.get("baselines", "1") == "1")
 
@@ -241,8 +305,9 @@ def full(name, env, model, d, threads, baselines=True):
     if os.environ.get("TB_SMOKE"):
         steps = [s + ["--limit", "300"] if s[0] == "adapters.py" else s for s in steps]
         e["BERT_LIMIT"] = "300"
-    for s in steps:
+    for k, s in enumerate(steps):
         print(f"== [{time.strftime('%H:%M:%S')}] {name}: {' '.join(s[:3])}", flush=True)
+        phase(phase=f"downstream {k + 1}/{len(steps)}: {' '.join(a for a in s[:5] if not a.startswith('/'))}")
         try:
             out = py(s, e)
         except RuntimeError as ex:  # one failed measurement must not lose the rest
@@ -302,8 +367,10 @@ def main():
     a = ap.parse_args()
     q = queue()
     if a.cmd == "run":
+        threading.Thread(target=heartbeat, daemon=True).start()
         return run(next(e for e in q if e["name"] == a.name), a.threads)
     os.makedirs(TB, exist_ok=True)
+    threading.Thread(target=heartbeat, daemon=True).start()
     with open(os.path.join(TB, "gc.lock"), "w") as lk:
         fcntl.flock(lk, fcntl.LOCK_EX)
         gc(q)
