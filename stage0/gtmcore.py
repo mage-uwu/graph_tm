@@ -66,7 +66,7 @@ SM1 = np.uint64(0xBF58476D1CE4E5B9)
 SM2 = np.uint64(0x94D049BB133111EB)
 TAGMUL = 0xD6E8FEB86659FD93
 
-TAG_INIT_W, TAG_NODE_SEL, TAG_UPD_SEL, TAG_FEEDBACK, TAG_CLAUSE_HV = 1, 2, 3, 4, 5
+TAG_INIT_W, TAG_NODE_SEL, TAG_UPD_SEL, TAG_FEEDBACK, TAG_CLAUSE_HV, TAG_NEG = 1, 2, 3, 4, 5, 6
 
 
 def _u64(x):
@@ -130,6 +130,32 @@ def update_prob(err, T, target, q, n_outputs):
     if target == -1:
         p = p * min(1.0, q / max(1, n_outputs - 1))
     return p
+
+
+def rank_plan(seed, step, cs, y, neg, k_neg, margin):
+    """Ranking (contrastive) output feedback, opt-in (--rank K): the outputs are a code and the
+    score of token t is sum_k cs_k * (2 b_tk - 1). Draw K rows of the negative table (counter
+    based), drop rows equal to the target code, keep the best-scoring one n (first on ties).
+    Only outputs where y and n differ get feedback, towards y, with the pairwise probability
+    (M - clip(m, -M, M)) / 2M, m = score(y) - score(n) over those outputs. Returns
+    (differ mask, p) or None when every draw equals the target.
+    cs: clipped vote sums (int), y: target bits, neg: (Nn, O) uint8."""
+    best, bs = None, None
+    sy = 2 * y.astype(np.int64) - 1
+    for i in range(k_neg):
+        r = int(key(seed, TAG_NEG, step, i, 0)) % len(neg)
+        b = neg[r]
+        if np.array_equal(b, y):
+            continue
+        sc = int(((2 * b.astype(np.int64) - 1) * cs).sum())
+        if bs is None or sc > bs:
+            bs, best = sc, b
+    if best is None:
+        return None
+    d = best != y
+    m = int((cs[d] * sy[d]).sum())
+    m = max(-margin, min(margin, m))
+    return d, (margin - m) / (2.0 * margin)
 
 
 def selection_masks(seed, step, output, n_clauses, thr16, thr16_ta):

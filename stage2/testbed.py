@@ -7,7 +7,8 @@ dense codes, node types, +-1/2/4 edges) where it clearly failed: WikiText-103 va
 Every experiment trains to P_COLLAPSE windows and is evaluated at EVAL_AT on the same 10k
 validation windows, so curves line up with that run.
 
-Options in the config (not passed to the engine): @ri=K residual init; @windows=N train N windows
+Options in the config (not passed to the engine): @ri=K residual init; @rank=K [@margin=M]
+ranking output feedback (engine --rank, negatives from neg_table(), M defaults to T); @windows=N train N windows
 instead of P_COLLAPSE (validation every 1M after 2M); @full=1 then run the proper run's downstream
 half (20k-window test, SST-2 / QNLI / CoNLL adapters, bert-tiny baselines unless @baselines=0).
 
@@ -150,6 +151,20 @@ def residual_init(model, k, layers="msg"):
     save_model(model, cfg, hv, w, ta, step)
 
 
+def neg_table(n=100_000, seed=0):
+    """negative code table for --rank: target codes of n tokens drawn from the real candidates
+    with probability ~ (train frequency + 1)^0.75 (word2vec's negative-sampling law)"""
+    p = os.path.join(C.DATA, f"negtable_{n}_{seed}.u8")
+    if not os.path.exists(p):
+        import eval_mlm as E
+        codes, cand, freq, _ = E.context()
+        w = (freq[cand].astype(np.float64) + 1) ** 0.75
+        ids = np.random.default_rng(seed).choice(cand, size=n, p=w / w.sum())
+        codes[ids].astype(np.uint8).tofile(p + ".tmp")
+        os.replace(p + ".tmp", p)
+    return p
+
+
 def run(exp, threads):
     name, env = exp["name"], exp["env"]
     wd = os.path.join(TB, "runs", name)
@@ -174,6 +189,8 @@ def run(exp, threads):
                    check=True, capture_output=True)
     if "ri" in opts:
         residual_init(model, int(opts["ri"]))
+    rank = ["--rank", opts["rank"], "--rank-margin", opts.get("margin", "0"), "--neg-table", neg_table()] \
+        if "rank" in opts else []
     done, train_s = 0, 0.0
     for i in range(1, windows // SHARD + 1):
         shard = os.path.join(d, f"s{i}.gtmd")
@@ -182,7 +199,7 @@ def run(exp, threads):
             py(["pretrain_data.py", "shard", "--split", "train", "--n", str(SHARD), "--seed", str(i), "--out", shard], env)
         t1 = time.time()
         subprocess.run([gtm, "train", "--data", shard, "--model", model, "--epochs", "1",
-                        "--threads", str(threads), "--save", model], check=True, capture_output=True)
+                        "--threads", str(threads), "--save", model] + rank, check=True, capture_output=True)
         dt = time.time() - t1
         if shard.startswith(wd):
             os.remove(shard)

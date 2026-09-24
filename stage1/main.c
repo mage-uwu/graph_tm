@@ -13,6 +13,10 @@
  *   --rho r   automaton feedback budget; ~2/O for many outputs (weights still see everything)
  *   --senders all|pos   pos: only clauses with a positive layer-0 literal send messages
  *   --forget all|layered  layered: a non-firing clause is forgotten only from the layer where it died
+ * training only (not saved in the model):
+ *   --rank K --neg-table F [--rank-margin M]  ranking output feedback: the outputs are a code, the
+ *             negative is the best-scoring of K draws from F (raw [n][O] 0/1 bytes, e.g. codes of
+ *             tokens sampled by frequency); M defaults to T. See stage0 gtmcore.rank_plan.
  *             (keeps bundles from saturating with large clause pools; not GraphTM semantics)
  */
 #define _GNU_SOURCE
@@ -36,6 +40,9 @@ typedef struct {
     gtm_config cfg;
     int have_max_inc;
     const char *s_arg;
+    const char *neg_table;
+    int rank_k;
+    long long rank_margin;
 } args_t;
 
 static void usage(void) {
@@ -63,6 +70,9 @@ static void parse(int argc, char **argv, args_t *a) {
         else if (!strcmp(k, "--threads")) a->threads = atoi(v);
         else if (!strcmp(k, "--steps")) a->steps = atoll(v);
         else if (!strcmp(k, "--reps")) a->reps = atoi(v);
+        else if (!strcmp(k, "--rank")) a->rank_k = atoi(v);
+        else if (!strcmp(k, "--rank-margin")) a->rank_margin = atoll(v);
+        else if (!strcmp(k, "--neg-table")) a->neg_table = v;
         else if (!strcmp(k, "--clauses")) a->cfg.C = (uint32_t)atoi(v);
         else if (!strcmp(k, "--T")) a->cfg.T = atoi(v);
         else if (!strcmp(k, "--s")) a->s_arg = v;
@@ -129,6 +139,20 @@ int main(int argc, char **argv) {
         gtm_data *te = a.test ? gtm_data_load(a.test) : NULL;
         gtm_model *m = d ? model_from(&a, d) : NULL;
         if (!m) return 1;
+        uint8_t *neg = NULL;
+        if (a.rank_k > 0) {
+            FILE *f = a.neg_table ? fopen(a.neg_table, "rb") : NULL;
+            if (!f) { fprintf(stderr, "gtm: --rank needs a readable --neg-table\n"); return 1; }
+            fseek(f, 0, SEEK_END);
+            long sz = ftell(f);
+            fseek(f, 0, SEEK_SET);
+            if (sz <= 0 || sz % m->O) { fprintf(stderr, "gtm: negative table size %ld is not a multiple of O=%u\n", sz, m->O); return 1; }
+            neg = malloc((size_t)sz);
+            if (fread(neg, 1, (size_t)sz, f) != (size_t)sz) { fprintf(stderr, "gtm: short read on %s\n", a.neg_table); return 1; }
+            fclose(f);
+            m->rank_k = (uint32_t)a.rank_k; m->neg_codes = neg; m->n_neg = (uint32_t)(sz / m->O);
+            m->rank_margin = a.rank_margin > 0 ? a.rank_margin : m->T;
+        }
         printf("train: %u graphs, C=%u O=%u L=%u D=%u T=%d threads=%d\n", d->n_graphs, m->C, m->O, m->L, m->D, m->T, a.threads);
         if (a.steps >= 0) {
             double t0 = now();
@@ -148,6 +172,7 @@ int main(int argc, char **argv) {
         }
         if (a.save) gtm_save(m, a.save);
         printf("  state hash %016llx\n", (unsigned long long)gtm_state_hash(m));
+        free(neg);
         gtm_free(m); gtm_data_free(d); gtm_data_free(te);
         return 0;
     }

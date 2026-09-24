@@ -52,7 +52,7 @@ static inline uint64_t gkey(uint64_t seed, uint64_t tag, uint64_t a, uint64_t b,
     return splitmix64(h ^ c);
 }
 
-enum { TAG_INIT_W = 1, TAG_NODE_SEL = 2, TAG_UPD_SEL = 3, TAG_FEEDBACK = 4, TAG_CLAUSE_HV = 5 };
+enum { TAG_INIT_W = 1, TAG_NODE_SEL = 2, TAG_UPD_SEL = 3, TAG_FEEDBACK = 4, TAG_CLAUSE_HV = 5, TAG_NEG = 6 };
 
 static inline uint32_t lowbias32(uint32_t x) {
     x ^= x >> 16; x *= 0x7FEB352Du;
@@ -390,6 +390,7 @@ gtm_model *gtm_new(const gtm_config *cfg) {
     for (uint32_t l = 0; l < m->D; l++) m->s[l] = cfg->s[l];
     m->rho = cfg->rho > 0 ? cfg->rho : 1.0;
     m->senders = cfg->senders;
+    m->rank_k = 0; m->n_neg = 0; m->rank_margin = 0; m->neg_codes = NULL;
     m->layered = cfg->layered;
 
     m->Cw = (m->C + 63) / 64;
@@ -1025,6 +1026,44 @@ static void output_feedback_plan(const gtm_model *m, uint64_t step, const int32_
     }
 }
 
+/* ranking output feedback (m->rank_k > 0; semantics in stage0 gtmcore.rank_plan): the outputs
+ * are a code, score(t) = sum_k cs_k (2 b_tk - 1). The best of rank_k counter-based draws from
+ * the negative table (rows equal to the target skipped, first max wins) is the negative n; only
+ * outputs where y and n differ get feedback towards y, all with the pairwise probability
+ * (M - clip(m)) / 2M, m = score(y) - score(n). Every thread computes the same plan. */
+static void rank_feedback_plan(const gtm_model *m, uint64_t step, const int32_t *cs, const int32_t *Y,
+                               int8_t *target, uint64_t *thr, uint64_t *thr_ta, uint64_t *hk) {
+    const uint32_t O = m->O;
+    const uint8_t *best = NULL;
+    int64_t bs = 0;
+    for (uint32_t i = 0; i < m->rank_k; i++) {
+        const uint8_t *b = m->neg_codes + (size_t)(gkey(m->seed, TAG_NEG, step, i, 0) % m->n_neg) * O;
+        int64_t sc = 0, same = 1;
+        for (uint32_t k = 0; k < O; k++) {
+            sc += b[k] ? cs[k] : -cs[k];
+            same &= (int64_t)(b[k] == (Y[k] == 1));
+        }
+        if (same) continue;
+        if (!best || sc > bs) { best = b; bs = sc; }
+    }
+    const uint64_t hs = gkey(m->seed, TAG_UPD_SEL, step, 0, 0);
+    int64_t mg = 0;
+    if (best)
+        for (uint32_t k = 0; k < O; k++)
+            if (best[k] != (Y[k] == 1)) mg += Y[k] == 1 ? cs[k] : -cs[k];
+    const int64_t M = m->rank_margin;
+    if (mg > M) mg = M;
+    if (mg < -M) mg = -M;
+    const double p = (double)(M - mg) / (2.0 * (double)M);
+    for (uint32_t k = 0; k < O; k++) {
+        const int on = best && best[k] != (Y[k] == 1);
+        target[k] = Y[k] == 1 ? 1 : -1;
+        thr[k] = on ? prob_threshold16(p) : 0;
+        thr_ta[k] = on ? prob_threshold16(p * m->rho) : 0;
+        hk[k] = splitmix64(hs ^ k);
+    }
+}
+
 /* one clause: node selection and sequential Type I / II feedback for the outputs in `ks`
  * (ascending; bit 15 set = Type II sign) that selected it for automaton feedback */
 static void update_clause(gtm_model *m, uint64_t step, uint32_t c, uint32_t n, const uint64_t *out,
@@ -1278,7 +1317,8 @@ static void *train_worker(void *argp) {
             yenc[k] = Y[k] == 1 ? m->T : -m->T;
         }
         const uint64_t step = step0 + (uint64_t)i;
-        output_feedback_plan(m, step, sums, yenc, target, thr, thr_ta, hk);
+        if (m->rank_k) rank_feedback_plan(m, step, sums, Y, target, thr, thr_ta, hk);
+        else output_feedback_plan(m, step, sums, yenc, target, thr, thr_ta, hk);
         memset(nlist, 0, (size_t)own * 4);
         const uint64_t last = (m->C & 63) ? (1ull << (m->C & 63)) - 1 : ~0ull;
         for (uint32_t k = 0; k < O; k++) {
