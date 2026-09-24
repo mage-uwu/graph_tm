@@ -52,7 +52,7 @@ static inline uint64_t gkey(uint64_t seed, uint64_t tag, uint64_t a, uint64_t b,
     return splitmix64(h ^ c);
 }
 
-enum { TAG_INIT_W = 1, TAG_NODE_SEL = 2, TAG_UPD_SEL = 3, TAG_FEEDBACK = 4, TAG_CLAUSE_HV = 5 };
+enum { TAG_INIT_W = 1, TAG_NODE_SEL = 2, TAG_UPD_SEL = 3, TAG_FEEDBACK = 4, TAG_CLAUSE_HV = 5, TAG_NEG = 6 };
 
 static inline uint32_t lowbias32(uint32_t x) {
     x ^= x >> 16; x *= 0x7FEB352Du;
@@ -390,6 +390,8 @@ gtm_model *gtm_new(const gtm_config *cfg) {
     for (uint32_t l = 0; l < m->D; l++) m->s[l] = cfg->s[l];
     m->rho = cfg->rho > 0 ? cfg->rho : 1.0;
     m->senders = cfg->senders;
+    m->rank_k = 0; m->n_neg = 0; m->rank_margin = 0; m->neg_codes = NULL;
+    m->layered = cfg->layered;
 
     m->Cw = (m->C + 63) / 64;
     m->Wl[0] = (m->L + 63) / 64;
@@ -520,7 +522,7 @@ int gtm_save(const gtm_model *m, const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) { perror(path); return -1; }
     gtmm_hdr h = {{'G', 'T', 'M', 'M'}, 2, m->C, m->O, m->H, m->NT, m->D, m->MS, m->MB, m->B,
-                  m->boost, m->neg, m->max_inc, m->T, m->senders};
+                  m->boost, m->neg, m->max_inc, m->T, m->senders | (m->layered << 1)};
     fwrite(&h, sizeof h, 1, f);
     fwrite(&m->q, 8, 1, f);
     fwrite(m->s, 8, m->D, f);
@@ -563,7 +565,7 @@ gtm_model *gtm_load(const char *path) {
     memcpy(&h, buf, sizeof h);
     if (memcmp(h.magic, "GTMM", 4) || (h.ver != 1 && h.ver != 2)) { fprintf(stderr, "%s: not a gtmm v1/v2 file\n", path); free(buf); return NULL; }
     size_t off = sizeof h;
-    gtm_config cfg = {h.C, h.O, h.H, h.NT, h.D, h.MS, h.MB, h.B, h.boost, h.neg, h.max_inc, h.T, 0, {0}, 0, 1.0, h.pad};
+    gtm_config cfg = {h.C, h.O, h.H, h.NT, h.D, h.MS, h.MB, h.B, h.boost, h.neg, h.max_inc, h.T, 0, {0}, 0, 1.0, h.pad & 1, (h.pad >> 1) & 1};
     memcpy(&cfg.q, buf + off, 8); off += 8;
     memcpy(cfg.s, buf + off, 8 * (size_t)h.D); off += 8 * (size_t)h.D;
     if (h.ver >= 2) { memcpy(&cfg.rho, buf + off, 8); off += 8; }
@@ -1024,11 +1026,49 @@ static void output_feedback_plan(const gtm_model *m, uint64_t step, const int32_
     }
 }
 
+/* ranking output feedback (m->rank_k > 0; semantics in stage0 gtmcore.rank_plan): the outputs
+ * are a code, score(t) = sum_k cs_k (2 b_tk - 1). The best of rank_k counter-based draws from
+ * the negative table (rows equal to the target skipped, first max wins) is the negative n; only
+ * outputs where y and n differ get feedback towards y, all with the pairwise probability
+ * (M - clip(m)) / 2M, m = score(y) - score(n). Every thread computes the same plan. */
+static void rank_feedback_plan(const gtm_model *m, uint64_t step, const int32_t *cs, const int32_t *Y,
+                               int8_t *target, uint64_t *thr, uint64_t *thr_ta, uint64_t *hk) {
+    const uint32_t O = m->O;
+    const uint8_t *best = NULL;
+    int64_t bs = 0;
+    for (uint32_t i = 0; i < m->rank_k; i++) {
+        const uint8_t *b = m->neg_codes + (size_t)(gkey(m->seed, TAG_NEG, step, i, 0) % m->n_neg) * O;
+        int64_t sc = 0, same = 1;
+        for (uint32_t k = 0; k < O; k++) {
+            sc += b[k] ? cs[k] : -cs[k];
+            same &= (int64_t)(b[k] == (Y[k] == 1));
+        }
+        if (same) continue;
+        if (!best || sc > bs) { best = b; bs = sc; }
+    }
+    const uint64_t hs = gkey(m->seed, TAG_UPD_SEL, step, 0, 0);
+    int64_t mg = 0;
+    if (best)
+        for (uint32_t k = 0; k < O; k++)
+            if (best[k] != (Y[k] == 1)) mg += Y[k] == 1 ? cs[k] : -cs[k];
+    const int64_t M = m->rank_margin;
+    if (mg > M) mg = M;
+    if (mg < -M) mg = -M;
+    const double p = (double)(M - mg) / (2.0 * (double)M);
+    for (uint32_t k = 0; k < O; k++) {
+        const int on = best && best[k] != (Y[k] == 1);
+        target[k] = Y[k] == 1 ? 1 : -1;
+        thr[k] = on ? prob_threshold16(p) : 0;
+        thr_ta[k] = on ? prob_threshold16(p * m->rho) : 0;
+        hk[k] = splitmix64(hs ^ k);
+    }
+}
+
 /* one clause: node selection and sequential Type I / II feedback for the outputs in `ks`
  * (ascending; bit 15 set = Type II sign) that selected it for automaton feedback */
 static void update_clause(gtm_model *m, uint64_t step, uint32_t c, uint32_t n, const uint64_t *out,
                           const uint64_t *X0, uint64_t *const *msg, const uint16_t *ks, uint32_t nk,
-                          uint64_t nodemask) {
+                          uint64_t nodemask, uint32_t dead_at) {
     if (nk == 0) return; /* counter-based RNG: skipping draws never shifts anyone else's */
     const uint32_t Cw = m->Cw, B = m->B;
     const uint32_t cw = c >> 6;
@@ -1058,6 +1098,9 @@ static void update_clause(gtm_model *m, uint64_t step, uint32_t c, uint32_t n, c
     const int grow = fired && m->ninc[c] <= m->max_inc;
     uint64_t a[GTM_MAX_WORDS], d[GTM_MAX_WORDS]; /* per-word active lanes (bounded at model creation) */
     for (uint32_t l = 0; l < m->D; l++) {
+        /* layered forget: a non-firing clause keeps the layers it still matched somewhere
+         * (skipping their draws is exact: draws are indexed, not streamed) */
+        if (!fired && m->layered && l < dead_at) continue;
         const uint32_t W = m->Wl[l];
         uint64_t *pl = m->ta[l] + (size_t)c * W * B;
         const uint64_t *msb = pl + (size_t)(B - 1) * W;
@@ -1200,6 +1243,13 @@ static void clause_range(uint32_t Cw, uint32_t P, uint32_t tid, uint32_t *cw0, u
     *cw1 = u1 * unit < Cw ? u1 * unit : Cw;
 }
 
+/* OR over nodes of this thread's clause words after a layer: which clauses are still true somewhere */
+static void layer_alive(const uint64_t *out, uint32_t n, uint32_t Cw, uint32_t cw0, uint32_t cw1, uint64_t *alive) {
+    for (uint32_t cw = cw0; cw < cw1; cw++) alive[cw] = 0;
+    for (uint32_t v = 0; v < n; v++)
+        for (uint32_t cw = cw0; cw < cw1; cw++) alive[cw] |= out[(size_t)v * Cw + cw];
+}
+
 static void *train_worker(void *argp) {
     train_arg *a = argp;
     train_ctx *ctx = a->ctx;
@@ -1219,6 +1269,7 @@ static void *train_worker(void *argp) {
     uint32_t *nlist = xalloc((size_t)(own ? own : 1) * 4);
     uint64_t *scratch = xalloc((size_t)2 * Cw * 8);
     uint64_t *nodemask = xalloc((size_t)(own ? own : 1) * 8);
+    uint64_t *alive = xalloc((size_t)m->D * Cw * 8); /* [layer][cw]: clause true at some node (own words) */
     uint64_t sense = 0; /* barrier episode */
     const uint64_t step0 = m->step;
 
@@ -1230,6 +1281,7 @@ static void *train_worker(void *argp) {
         const uint32_t *ntype = ds->ntype + n0;
 
         eval_layer(m, ds, ntype, n, 0, X0, cw0, cw1, ctx->out, scratch);
+        if (m->layered) layer_alive(ctx->out, n, Cw, cw0, cw1, alive);
         for (uint32_t d = 1; d < m->D; d++) {
             const uint32_t s0 = (uint32_t)((uint64_t)tid * n / P), s1 = (uint32_t)((uint64_t)(tid + 1) * n / P);
             barrier_wait(&ctx->bar, tid, &sense);
@@ -1238,6 +1290,7 @@ static void *train_worker(void *argp) {
             build_messages(m, ds, n0, s0, s1, ctx->bundle, ctx->msg[d]);
             barrier_wait(&ctx->bar, tid, &sense);
             eval_layer(m, ds, ntype, n, d, ctx->msg[d], cw0, cw1, ctx->out, scratch);
+            if (m->layered) layer_alive(ctx->out, n, Cw, cw0, cw1, alive + (size_t)d * Cw);
         }
 
         int32_t *mine = ctx->partial + ((size_t)(i & 1) * P + tid) * ctx->Opad;
@@ -1264,7 +1317,8 @@ static void *train_worker(void *argp) {
             yenc[k] = Y[k] == 1 ? m->T : -m->T;
         }
         const uint64_t step = step0 + (uint64_t)i;
-        output_feedback_plan(m, step, sums, yenc, target, thr, thr_ta, hk);
+        if (m->rank_k) rank_feedback_plan(m, step, sums, Y, target, thr, thr_ta, hk);
+        else output_feedback_plan(m, step, sums, yenc, target, thr, thr_ta, hk);
         memset(nlist, 0, (size_t)own * 4);
         const uint64_t last = (m->C & 63) ? (1ull << (m->C & 63)) - 1 : ~0ull;
         for (uint32_t k = 0; k < O; k++) {
@@ -1286,11 +1340,16 @@ static void *train_worker(void *argp) {
                 update_weights(wv, sel & fired[cw], target[k], (int)m->neg);
             }
         }
-        for (uint32_t c = c0; c < c1; c++)
+        for (uint32_t c = c0; c < c1; c++) {
+            uint32_t dead_at = m->D;
+            if (m->layered)
+                for (uint32_t d = 0; d < m->D; d++)
+                    if (!(alive[(size_t)d * Cw + (c >> 6)] >> (c & 63) & 1)) { dead_at = d; break; }
             update_clause(m, step, c, n, ctx->out, X0, ctx->msg, lists + (size_t)(c - c0) * O, nlist[c - c0],
-                          n <= 64 ? nodemask[c - c0] : 0);
+                          n <= 64 ? nodemask[c - c0] : 0, dead_at);
+        }
     }
-    free(sums); free(yenc); free(target); free(thr); free(thr_ta); free(hk); free(fired); free(lists); free(nlist); free(scratch); free(nodemask);
+    free(sums); free(yenc); free(target); free(thr); free(thr_ta); free(hk); free(fired); free(lists); free(nlist); free(scratch); free(nodemask); free(alive);
     return NULL;
 }
 

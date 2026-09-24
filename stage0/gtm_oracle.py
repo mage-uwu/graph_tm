@@ -18,7 +18,7 @@ Deliberate differences from the CUDA code, none of which change semantics:
   * Padding literals past L are ignored instead of carried along.
 """
 import numpy as np
-from gtmcore import (ModelConfig, key, prob_threshold16, feedback_mask, clause_hypervectors,
+from gtmcore import (ModelConfig, key, prob_threshold16, feedback_mask, clause_hypervectors, rank_plan,
                      TAG_INIT_W, TAG_NODE_SEL, update_prob, selection_masks, save_model, load_model)
 
 INT_MAX = 2**31 - 1
@@ -44,6 +44,7 @@ class OracleGTM:
         self.hv = clause_hypervectors(c.seed, c.C, c.MS, c.MB)
         self.step = 0
         self.thr_s = [prob_threshold16(1.0 / s) for s in c.s]
+        self.rank = None  # training option, not persisted: (negative table (Nn, O) uint8, K, margin)
 
     # ------------------------------------------------------------------ io
     def save(self, path):
@@ -56,7 +57,7 @@ class OracleGTM:
         m.cfg, m.hv, m.w, m.ta, m.step = cfg, hv, w, ta, step
         m.half, m.maxs = 1 << (cfg.B - 1), (1 << cfg.B) - 1
         m.thr_s = [prob_threshold16(1.0 / s) for s in cfg.s]
-
+        m.rank = None
         return m
 
     # ------------------------------------------------------------ evaluate
@@ -90,6 +91,7 @@ class OracleGTM:
         out = typeok & ~viol
         n_inc = inc.sum(1)
         layer_X = [X0]
+        alive = [out.any(axis=1)]
         for d in range(1, c.D):
             Xm = self._messages(ds, n0, n, out)
             inc = self.ta[d] >= self.half
@@ -97,8 +99,13 @@ class OracleGTM:
             out = out & typeok & ~viol
             n_inc = n_inc + inc.sum(1)
             layer_X.append(Xm)
+            alive.append(out.any(axis=1))
         clause_true = out.any(axis=1)
         class_sum = self.w[:, clause_true].sum(axis=1)
+        # first layer at which each clause is false at every node (D if it survives all layers)
+        alive = np.stack(alive)
+        dead_at = np.where(alive.all(0), c.D, np.argmin(alive, axis=0))
+        self._dead_at = dead_at
         return out, clause_true, class_sum, n_inc, layer_X
 
     def score(self, ds):
@@ -116,7 +123,7 @@ class OracleGTM:
                 sel[j] = nodes[int(key(self.cfg.seed, TAG_NODE_SEL, t, j, 0)) % len(nodes)]
         return sel
 
-    def _select_updates(self, class_sum, yenc, sel, t):
+    def _select_updates(self, class_sum, yenc, sel, t, ybits=None):
         """select_clause_updates: per output, a Bernoulli(err/2T * q') subset of clauses gets
         feedback of sign target * sign(weight); weights of fired clauses move accordingly.
         Returns the automaton feedback signs: a rho-subset of the same pairs (decoupled feedback)."""
@@ -124,10 +131,20 @@ class OracleGTM:
         upd = np.zeros((c.O, c.C), dtype=np.int64)
         cs = np.clip(class_sum, -c.T, c.T)
         fired = sel != -1
+        rp = None
+        if self.rank is not None:  # (negative table, K, margin): ranking feedback, see rank_plan
+            rp = rank_plan(c.seed, t, cs.astype(np.int64), ybits, *self.rank)
+            if rp is None:
+                return upd
         for k in range(c.O):
-            y = int(yenc[k])
-            target = 1 - 2 * int(cs[k] > y)
-            p = update_prob(abs(y - int(cs[k])), c.T, target, c.q, c.O)
+            if rp is not None:
+                if not rp[0][k]:
+                    continue
+                target, p = (1 if ybits[k] else -1), rp[1]
+            else:
+                y = int(yenc[k])
+                target = 1 - 2 * int(cs[k] > y)
+                p = update_prob(abs(y - int(cs[k])), c.T, target, c.q, c.O)
             chosen, chosen_ta = selection_masks(c.seed, t, k, c.C, prob_threshold16(p), prob_threshold16(p * c.rho))
             if not chosen.any():
                 continue
@@ -155,6 +172,8 @@ class OracleGTM:
                 for k in range(c.O):
                     fb_sign = upd[k, j]
                     if fb_sign > 0:  # Type I
+                        if not fired and c.layered and layer < self._dead_at[j]:
+                            continue  # layered forget: this layer matched somewhere, spare it
                         fb = feedback_mask(c.seed, t, j, k, c.O, layer, nl, self.thr_s[layer])
                         st = ta[j]
                         if fired and n_inc[j] <= c.max_inc:
@@ -173,7 +192,7 @@ class OracleGTM:
         out, _, class_sum, n_inc, layer_X = self._eval(ds, g)
         t = self.step
         sel = self._select_nodes(out, t)
-        upd = self._select_updates(class_sum, yenc, sel, t)
+        upd = self._select_updates(class_sum, yenc, sel, t, (yenc > 0).astype(np.uint8))
         self._update_tas(upd, sel, n_inc, layer_X, t)
         self.step += 1
 

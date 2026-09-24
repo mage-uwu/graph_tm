@@ -1,0 +1,90 @@
+# Lines marked #ran: finished (results in README / the pod log); kept for the record. The pod disk
+# filled at ~23:55 and was reset by a restart, so only the unfinished experiments stay live.
+# name	data env (K=V;K=V or -)	gtm config          -- each runs to p-collapse (2M windows), see testbed.py
+# Round 1: isolate the bottleneck. Is it message passing, or the TM head on this target?
+#ran E0_base	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 3 --msg-size 256 --senders pos --q -1 --rho 0.0078
+#ran E1_flat_oracle_d1	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+# Round 2: centre-node message fill is 96-98% (98 senders x 6 in-edges x 2 bits into 256 bits):
+# an overloaded Bloom filter. Aim for ~50% at the centre at the same 4.42M params: depth 2 (one
+# hop over +-1/+-2 = the flat oracle's receptive field) frees the budget for msg-size 512,
+# 1 bit per sender, empty [MASK] code so centre clauses stop broadcasting.
+#ran R2a_d2_ms512_mb1_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
+#ran R2b_d2_ms512_mb1_d12	GTM_DISTS=1,2	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
+#ran R2c_d2_ms512_mb1_d124_me	GTM_DISTS=1,2,4;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --senders pos --q -1 --rho 0.0078
+#ran R2d_d2_ms256_mb2_d12_me	GTM_DISTS=1,2;GTM_MASK_EMPTY=1	--clauses 2880 --T 50000 --s 5.0 --depth 2 --msg-size 256 --msg-bits 2 --senders pos --q -1 --rho 0.0078
+# Round 3: R2b (depth 2, msg 512, 1 bit/sender, +-1/2, normal MASK) reached 0.281 acc@10 at 2M = 91% of the
+# flat oracle; empty MASK kills senders (context clauses lose positive literals). Now: longer context
+# (+-4 edges; 2 hops at matched params), larger messages at matched params, s, and a +-8 flat oracle.
+#ran R3a_d2_ms512_mb1_d124	GTM_DISTS=1,2,4	--clauses 2880 --s 5.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+#ran R3b_d3_ms512_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 3 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+# Round 4 (sender autopsy): a context clause whose deeper message layers block everywhere counts as
+# not fired, and Type I "forget" then erodes ALL its layers including layer 0 -> it loses its
+# positive literals -> it can no longer send -> fill drops -> more clauses block (cascade). Message
+# automata start 1 state below include, so ~100 near-always-true message bits lock in at once.
+# Residual init (@ri=K): message-layer automata start K states below include (pass-through), so a
+# clause starts as its layer-0 part and adds message literals only after ~K net reinforcements.
+#ran R4a_d3_c1728_ri64	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=64
+#ran R4b_d2_c2880_ri64	GTM_DISTS=1,2	--clauses 2880 --depth 2 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=64
+#ran R4c_d3_c1728_ri32	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=32
+#ran R4d_d3_c1728_ri120	GTM_DISTS=1,2	--clauses 1728 --depth 3 --msg-size 512 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 --msg-bits 1 @ri=120
+# Autopsy: a literal-budget explanation was tested and REFUTED (--max-inc 4096 still empties layer 0).
+# Measured cause: ~72% of a clause's Type I events arrive while its final conjunction is false
+# everywhere ("forget", applied to ALL layers at 1/s). Per layer-0 token literal (true ~50%):
+# +0.07*(0.5-0.5/s) [Type I fired] +0.07*0.5 [Type II] -0.34/s [forget] = ~-0.005 at s=5: zero drift,
+# no restoring force; depth 3's transient tips it to empty and senders die. s=3/5/10 -> layer-0
+# literals 1.0/1.4/3.3 and acc@10 0.278/0.281/0.285, as predicted. Fix: per-layer s (layer 0 high).
+#ran R5a_d3_c1728_s10.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 10,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+#ran R5b_d3_c1728_s20.5.5	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 20,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+#ran R5c_d2_c2880_s20.5	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 20,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+#ran R5d_d2_c2880_s20.10	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 20,10 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+# Round 6: Byte Latent Transformer front end, Tsetlin-native (blt.py): byte + hash n-gram (3..8,
+# RollPolyHash) fixed +-1 embeddings, entropy patching (count-based char LM, global threshold,
+# ~4.5 bytes/patch), patch code = sign(sum) of its byte vectors (majority-bundle pooling). Same
+# validation windows as all runs above. Linear readout of +-2 patches: 0.298 acc@10 vs 0.301 random codes.
+# Round 7: engine flag --forget layered (oracle + C, full parity + TSan clean): a non-firing clause is
+# forgotten only from the first layer at which it was false everywhere, so failing message layers no
+# longer erode the layer-0 sender literals. R4 showed residual init alone only delays the depth-3
+# collapse (0.280 at 500k -> 0.241 at 2M) and gives the best depth 2 (R4b 0.297).
+#ran L1_d3_c1728_layered	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered
+#ran L2_d3_c1728_layered_ri64	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
+#ran L3_d2_c2880_layered_ri64	GTM_DISTS=1,2	--clauses 2880 --depth 2 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
+#ran L4_d3_c1728_layered_ri64_d124	GTM_DISTS=1,2,4	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64
+#ran B1_blt_d2_s10	GTM_LAYOUT=blt;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+# Round 8: layered forget makes depth 3 stable (L1 0.277, L2 0.282 at 2M, no collapse) but overshoots:
+# with no forget from deeper failures, layer 0 only grows -> context clauses become exact token
+# detectors (~51 pos + ~51 neg of 128 literals), 19 senders/node, centre fill L1 12% / L2 2%, the
+# second hop carries almost nothing. Bound specificity: literal budget (--max-inc) or a stronger
+# layer-0 forget (low layer-0 s).
+#ran L5_d3_layered_ri64_maxinc32	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 32 @ri=64
+# (_r: re-queued after the pod disk filled at 23:5x and these failed on ENOSPC)
+# Proper run (user: "measure how close that takes us to the proper run"): the first run's full
+# protocol -- 10M windows, 20k test windows, SST-2 / QNLI / CoNLL adapters vs bert-tiny -- on the
+# best depth-2 config (R4b) and the stabilised depth-3 config (L2, layered forget + residual init).
+# North star (what works best and stays efficient): learned co-occurrence input codes (GTM_CODES=dist,
+# +3.4 acc@10 at zero cost) on the best graph config; full protocol (10M, test20k, adapters, bert-tiny).
+N1_R4b_dist_full	GTM_DISTS=1,2;GTM_CODES=dist	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=10000000 @full=1
+# The word itself in the features: BERT's 80/10/10 centre policy in pretraining, adapters with the word
+# visible (and masked, for comparison); 2M windows (N1 peaked at 1.5M), best checkpoint downstream.
+N5_R4b_dist_bert_word	GTM_DISTS=1,2;GTM_CODES=dist;GTM_MASK_POLICY=bert	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=2000000 @full=1 @best=1 @centre=word @baselines=0
+# same with ranking output feedback (K=16, M=8T: best acc@1/MRR in the flat test), and the flat oracle pair
+EXPORT_models_1	-	-
+#parked (user asleep; pod stops after the model export) N2_R4b_dist_rank	GTM_DISTS=1,2;GTM_CODES=dist	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @rank=16 @margin=400000
+#parked (user asleep; pod stops after the model export) N3_flat_dist	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2;GTM_CODES=dist	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+#parked (user asleep; pod stops after the model export) N4_flat_dist_rank	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-2:-1:1:2;GTM_CODES=dist	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078 @rank=16 @margin=400000
+#parked F1_R4b_full_r	GTM_DISTS=1,2	--clauses 2880 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078 --s 5.0 @ri=64 @windows=10000000 @full=1
+#parked F2_L2_full_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --s 5.0 --forget layered @ri=64 @windows=10000000 @full=1 @baselines=0
+#ran L6_d3_layered_ri64_maxinc16	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 16 @ri=64
+#ran L9_d3_layered_ri64_maxinc8	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered --max-inc 8 @ri=64
+#parked L7_d3_layered_ri64_s2.5.5_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 2,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
+#parked L8_d3_layered_ri64_s3.5.5_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 3,5,5 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --forget layered @ri=64
+#ran B2_blt_flat_oracle	GTM_LAYOUT=blt_flat;GTM_FLAT_OFFSETS=-2:-1:1:2	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
+#ran B3_tokhash_d2_s10	GTM_LAYOUT=tokhash;GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512
+#parked R4e_d3_c1728_maxinc4096_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+#parked R4f_d2_s10_maxinc4096_r	GTM_DISTS=1,2	--clauses 2880 --depth 2 --s 10.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096
+#parked R4g_d3_c1728_ri64_maxinc4096_r	GTM_DISTS=1,2	--clauses 1728 --depth 3 --s 5.0 --T 50000 --senders pos --q -1 --rho 0.0078 --msg-bits 1 --msg-size 512 --max-inc 4096 @ri=64
+#ran R3c_d2_ms1024_mb1_d12_c1728	GTM_DISTS=1,2	--clauses 1728 --s 5.0 --depth 2 --msg-size 1024 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+#ran R3d_d2_ms512_mb1_d12_s10	GTM_DISTS=1,2	--clauses 2880 --s 10.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+#ran R3e_flat8_oracle_c1000	GTM_LAYOUT=flat;GTM_FLAT_OFFSETS=-8:-7:-6:-5:-4:-3:-2:-1:1:2:3:4:5:6:7:8	--clauses 1000 --s 5.0 --depth 1 --T 50000 --q -1 --rho 0.0078
+#ran R3f_d2_ms512_mb1_d12_s3	GTM_DISTS=1,2	--clauses 2880 --s 3.0 --depth 2 --msg-size 512 --msg-bits 1 --T 50000 --senders pos --q -1 --rho 0.0078
+# controls
+#ran E2_bag_d1	GTM_DISTS=1,2,4	--clauses 2880 --T 50000 --s 5.0 --depth 1 --q -1 --rho 0.0078
