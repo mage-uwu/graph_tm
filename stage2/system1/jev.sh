@@ -1,8 +1,8 @@
 #!/bin/bash
 # Jev-style adaptation experiment (stage2/system1/jevft.py) on a test pod. Boot / paste-once:
-#   git clone -q --depth 1 --filter=blob:none --sparse -b claude/lucid-ritchie-qtpddj https://github.com/mage-uwu/graph_tm /root/jevrepo \
-#     && git -C /root/jevrepo sparse-checkout set --no-cone /stage2/ /logic-bert.tar.gz /models/logicae/pt.ltc /models/logicae/MANIFEST.txt \
+#   rm -rf /root/jevrepo && git clone -q --depth 1 -b claude/lucid-ritchie-qtpddj https://github.com/mage-uwu/graph_tm /root/jevrepo \
 #     && JEV_TOKEN=<24 hex> setsid nohup bash /root/jevrepo/stage2/system1/jev.sh > /root/jev.out 2>&1 < /dev/null &
+# (plain shallow clone: the pod images' old git rejects --sparse clones)
 # Installs build tools + CPU torch / transformers (Python 3.8 wheels only), checks pt.ltc against the
 # manifest, serves /root/jev_exports/<JEV_TOKEN>/ (results.jsonl, summary.md, jev.log, the hardened
 # LogicAE models) read-only on :8888 from the start, then runs jevft.py.
