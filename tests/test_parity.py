@@ -91,7 +91,8 @@ def noncomplementary(ds, rng):
 def cfg_args(cfg):
     return ["--clauses", cfg.C, "--T", cfg.T, "--s", ",".join(repr(x) for x in cfg.s), "--q", repr(cfg.q),
             "--depth", cfg.D, "--msg-size", cfg.MS, "--msg-bits", cfg.MB, "--max-inc", cfg.max_inc,
-            "--state-bits", cfg.B, "--boost", cfg.boost, "--neg", cfg.neg, "--seed", cfg.seed, "--rho", repr(cfg.rho), "--senders", "pos" if cfg.senders else "all"]
+            "--state-bits", cfg.B, "--boost", cfg.boost, "--neg", cfg.neg, "--seed", cfg.seed, "--rho", repr(cfg.rho), "--senders", "pos" if cfg.senders else "all",
+            "--forget", "layered" if cfg.layered else "all"]
 
 
 def models_equal(pa, pb):
@@ -147,25 +148,32 @@ def test_inference(rng):
         check(f"clause bits", np.array_equal(want_bits, got_bits))
 
 
-def train_case(name, ds, cfg, steps, threads_list=(1, 2, 3, 5, 8, 16)):
+def train_case(name, ds, cfg, steps, threads_list=(1, 2, 3, 5, 8, 16), rank=None):
+    """rank: (negative code table (Nn, O) uint8, K, margin) -> ranking output feedback"""
     dp = os.path.join(TMP, name + ".gtmd"); ds.save(dp)
     init = os.path.join(TMP, name + ".init.gtmm")
     run(GTM, "init", "--data", dp, "--out", init, *cfg_args(cfg))
+    extra = []
+    if rank is not None:
+        tp = os.path.join(TMP, name + ".neg.u8")
+        rank[0].astype(np.uint8).tofile(tp)
+        extra = ["--rank", rank[1], "--rank-margin", rank[2], "--neg-table", tp]
 
     o = OracleGTM.load(init)
+    o.rank = rank
     o.fit(ds, epochs=10**9, max_steps=steps)
     op = os.path.join(TMP, name + ".oracle.gtmm"); o.save(op)
 
     hashes = []
     for t in threads_list:
         cp = os.path.join(TMP, f"{name}.c{t}.gtmm")
-        run(GTM, "train", "--data", dp, "--model", init, "--steps", steps, "--threads", t, "--save", cp)
+        run(GTM, "train", "--data", dp, "--model", init, "--steps", steps, "--threads", t, "--save", cp, *extra)
         if t == threads_list[0]:
             ok, why = models_equal(op, cp)
             check(f"train {name} ({steps} steps) oracle == C", ok, why)
         hashes.append(run(GTM, "hash", "--model", cp).strip())
     pp = os.path.join(TMP, f"{name}.portable.gtmm")
-    run(GTM_PORTABLE, "train", "--data", dp, "--model", init, "--steps", steps, "--threads", 2, "--save", pp)
+    run(GTM_PORTABLE, "train", "--data", dp, "--model", init, "--steps", steps, "--threads", 2, "--save", pp, *extra)
     hashes.append(run(GTM, "hash", "--model", pp).strip())
     check(f"train {name} thread/ISA invariance {list(threads_list)}+scalar", len(set(hashes)) == 1, str(set(hashes)))
     # the trained model must also score identically, via the indexed and the reference evaluator
@@ -229,6 +237,19 @@ def test_training(rng, quick):
     ds = random_dataset(rng, 100, 96, 2, 2, 6, 1)
     train_case("multi_out", ds,
                ModelConfig(130, 6, 96, 2, depth=2, msg_size=192, T=25, q=0.5, s=2.0, seed=8), steps=100 * scale)
+    # layered forget: a non-firing clause keeps the layers it still matched somewhere (depth 3,
+    # positive senders, node types, decoupled feedback, so every code path of the flag is hit)
+    ds = random_dataset(rng, 80, 64, 2, 3, 12, 1)
+    train_case("layered", ds, ModelConfig(120, 12, 64, 2, depth=3, msg_size=128, T=25, q=11.0, s=(3.0, 2.0, 4.0),
+                                          seed=13, rho=0.5, senders=1, layered=1), steps=80 * scale)
+    # ranking output feedback: outputs are a code; negatives from a table that also holds exact
+    # copies of targets (skipped); a small margin (clipped from both sides) and a large one
+    ds = random_dataset(rng, 80, 64, 2, 2, 24, 1)
+    table = np.vstack([(rng.random((50, 24)) < 0.5), ds.Y[:10] == 1]).astype(np.uint8)
+    train_case("rank", ds, ModelConfig(130, 24, 64, 2, depth=2, msg_size=128, T=25, q=23.0, s=(3.0, 2.0),
+                                       seed=14, rho=0.5, senders=1), steps=80 * scale, rank=(table, 7, 40))
+    train_case("rank_wide_margin", ds, ModelConfig(100, 24, 64, 2, depth=3, msg_size=64, T=30, s=3.0, seed=15,
+                                                   layered=1), steps=80 * scale, rank=(table, 3, 100000))
 
 
 if __name__ == "__main__":

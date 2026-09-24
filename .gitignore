@@ -3,3 +3,5 @@ stage1/gtm_portable
 data/*
 !data/.keep
 __pycache__/
+stage1/gtm_asan
+bench/*.ckpt

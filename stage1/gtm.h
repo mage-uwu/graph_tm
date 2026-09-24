@@ -31,7 +31,13 @@ typedef struct {
     double s[GTM_MAX_DEPTH];
     double rho;         /* automaton feedback budget (1 = original semantics) */
     uint32_t senders;   /* 0: all clauses send messages; 1: only clauses with a positive layer-0 literal */
+    uint32_t layered;   /* 1: a non-firing clause is forgotten only from the layer where it died onwards */
     uint64_t seed, step;
+    /* training option, not saved: ranking output feedback against the best of rank_k draws from
+     * the negative code table neg_codes [n_neg][O] (0/1 bytes); 0 = per-output feedback (CUDA) */
+    uint32_t rank_k, n_neg;
+    int64_t rank_margin;
+    const uint8_t *neg_codes;
 
     /* derived */
     uint32_t Wl[GTM_MAX_DEPTH]; /* words per layer input (layer 0: L bits, others: M bits) */
@@ -73,6 +79,7 @@ typedef struct {
     uint64_t seed;
     double rho;         /* 0 is treated as 1 */
     uint32_t senders;
+    uint32_t layered;
 } gtm_config;
 
 /* model lifecycle */
