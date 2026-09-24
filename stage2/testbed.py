@@ -23,6 +23,7 @@ GTM_HV_BITS); shards are cached per data env under DATA/tb/data/<key>/. Results 
   python3 testbed.py run NAME --threads N run one experiment by name
 """
 import argparse
+import hashlib
 import fcntl
 import json
 import os
@@ -358,6 +359,66 @@ def gc(q):
                 os.remove(os.path.join(d, f))
 
 
+def export(port=8888, hours=3):
+    """EXPORT_* queue entries: hard-link every trained model (runs/*/*.gtmm), the learned input
+    code embeddings (dist_emb_*.npy) and the result logs into one directory under a random token,
+    write a sha256 manifest, and serve it read-only over HTTP on `port` for `hours` (detached, it
+    outlives this worker) so the files can be copied off the pod"""
+    tok = os.urandom(12).hex()
+    out = os.path.join(TB, "export", tok)
+    os.makedirs(out)
+    src = [os.path.join(TB, "runs", r, f) for r in sorted(os.listdir(os.path.join(TB, "runs")))
+           for f in sorted(os.listdir(os.path.join(TB, "runs", r))) if f.endswith(".gtmm")]
+    src += [os.path.join(C.DATA, f) for f in sorted(os.listdir(C.DATA)) if f.startswith("dist_emb_")]
+    src += [os.path.join(TB, f) for f in ("full.jsonl", "results.jsonl") if os.path.exists(os.path.join(TB, f))]
+    lines = []
+    for f in src:
+        name = os.path.relpath(f, TB).replace(os.sep, "__") if f.startswith(TB) else os.path.basename(f)
+        dst = os.path.join(out, name)
+        try:
+            os.link(f, dst)
+        except OSError:
+            shutil.copy(f, dst)
+        h = hashlib.sha256()
+        with open(dst, "rb") as fh:
+            for b in iter(lambda: fh.read(1 << 20), b""):
+                h.update(b)
+        lines.append(f"{h.hexdigest()}  {os.path.getsize(dst)}  {name}")
+    with open(os.path.join(out, "MANIFEST.txt"), "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    subprocess.Popen(["timeout", str(hours * 3600), sys.executable, os.path.abspath(__file__), "serve", out,
+                      "--port", str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    print(f"== [{time.strftime('%H:%M:%S')}] EXPORT serving {len(lines)} files on :{port} for {hours} h "
+          f"(token {tok})", flush=True)
+    for l in lines:
+        print(f"EXPORT {l}", flush=True)
+
+
+def serve(d, port):
+    """read-only file server for export(): only /<token>/<file> with the export's own token,
+    no directory listings"""
+    import http.server
+    tok = os.path.basename(d.rstrip("/"))
+
+    class H(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **k):
+            super().__init__(*a, directory=d, **k)
+
+        def send_head(self):
+            parts = self.path.split("?")[0].strip("/").split("/")
+            if len(parts) != 2 or parts[0] != tok or not os.path.isfile(os.path.join(d, parts[1])):
+                self.send_error(404)
+                return None
+            self.path = "/" + parts[1]
+            return super().send_head()
+
+        def log_message(self, *a):
+            pass
+
+    http.server.ThreadingHTTPServer(("", port), H).serve_forever()
+
+
 def claim(name):
     os.makedirs(os.path.join(TB, "claimed"), exist_ok=True)
     try:
@@ -369,10 +430,13 @@ def claim(name):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["next", "run"])
+    ap.add_argument("cmd", choices=["next", "run", "serve"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--threads", type=int, default=os.cpu_count())
+    ap.add_argument("--port", type=int, default=8888)
     a = ap.parse_args()
+    if a.cmd == "serve":
+        return serve(a.name, a.port)
     q = queue()
     if a.cmd == "run":
         threading.Thread(target=heartbeat, daemon=True).start()
@@ -389,7 +453,7 @@ def main():
     if mine is None:
         sys.exit(3)
     try:
-        run(mine, a.threads)
+        export() if mine["name"].startswith("EXPORT") else run(mine, a.threads)
         print(f"== [{time.strftime('%H:%M:%S')}] {mine['name']}: done", flush=True)
     except Exception as ex:  # keep the worker alive; the failure is in the log
         print(f"== {mine['name']}: FAILED {str(ex)[-3000:]}", flush=True)
