@@ -254,3 +254,31 @@ Test sets as in the first run; frozen features, logistic head (TM head in bracke
 N5 (80/10/10 centre policy, 2M windows, best checkpoint) tests at 0.1515 / 0.3048 / 0.204, the
 same as N1 at a fifth of the windows. Its SST-2 score with masked-centre features is 0.617, also
 about the same.
+
+## N5 full results: 80/10/10 centre policy (`N5_R4b_dist_bert_word`)
+
+These are all of N5's `FULL ... RESULT` lines (finished 2026-09-24 09:20 UTC). The raw lines are in `models/graphtm/full.jsonl`.
+There are two feature variants: `-mask`, where the centre token is masked at feature time, and `-word`, where the centre
+word is visible. Heads: `logreg` is the logistic head, `fuse` is late fusion with the GraphTM weight picked on dev (0 means
+bag of words only), and `tm` is the TM head. Test scores; masked-token test: acc@1 0.1515, acc@10 0.3048, MRR 0.204.
+
+| task (metric) | features | -mask logreg / fuse / tm | -word logreg / fuse / tm | bag of words |
+|---|---|---|---|---|
+| SST-2 (acc) | gtm | 0.617 / - / 0.615 | 0.612 / - / 0.610 | 0.787 |
+| SST-2 (acc) | gtm+bow | 0.757 / 0.776 (w .5) / 0.663 | 0.772 / 0.787 (w 0) / 0.669 | |
+| QNLI (acc) | gtm | **0.687** / - / 0.640 | 0.675 / - / 0.640 | 0.769 |
+| QNLI (acc) | gtm+bow | 0.717 / 0.773 (w .1) / 0.643 | 0.734 / 0.772 (w .25) / 0.646 | |
+| CoNLL (entity F1) | gtm | 0.387 / - / 0.309 | 0.121 / - / 0.152 | 0.470 |
+| CoNLL (entity F1) | gtm+bow | step failed | **0.511** / 0.470 (w 0) / 0.271 | |
+
+- Versus N1, the masked-centre GraphTM features score higher on QNLI (0.687 vs 0.633, above frozen bert-tiny's 0.646)
+  and on CoNLL (0.387 vs 0.345). SST-2 is unchanged.
+- CoNLL `-word` gtm+bow with the logistic head (0.511) is the first result where adding GraphTM features beats bag of
+  words alone (0.470), by 4.1 F1. Fusion picked weight 0 on dev there, so its 0.470 is bag of words alone. The
+  late-fusion gains on QNLI (+0.3 to +0.4) are within noise.
+- The CoNLL `-mask` gtm+bow step failed after 35 min, the same step as in N1's run. As in N1, the last 2000 characters of
+  error output the testbed logged are all lbfgs convergence warnings, so the cause is cut off. Available memory was
+  188 GB just before the failure.
+
+Exported models (sha256-verified against the pod manifest): `models/graphtm/` holds the N1 final, 9M and 10M-window checkpoints,
+the N5 final and best models, the `dist` code embedding table, and the run logs `full.jsonl` / `results.jsonl`.
