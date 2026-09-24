@@ -148,4 +148,17 @@ literal-budget explanation was tested and refuted (`--max-inc 4096` still collap
 Layered forget overshoots: without forget from deeper failures, layer 0 only grows and context
 clauses become exact token detectors (~51+51 of 128 literals, 19 senders/node), so layer-2 centre
 fill is ~2% and the second hop carries almost nothing. A literal budget bounds this (local trace,
-`--max-inc 32`: ~22 layer-0 literals, layer-2 centre fill 7.5%); round 8 sweeps it.
+`--max-inc 32`: ~22 layer-0 literals, layer-2 centre fill 7.5%), but round 8 shows it costs more
+than it gains: the second hop gets more signal, while the first hop and the centre clauses lose it.
+
+| exp | layered + ri64, depth 3, plus | acc@1 | acc@10 @2M | layer-1 / layer-2 centre fill |
+|---|---|---|---|---|
+| L2 | - | 0.112 | **0.282** | 11% / 2% |
+| L5 | `--max-inc 32` | 0.071 | 0.270 | 9% / 8% |
+| L6 | `--max-inc 16` | 0.070 | 0.270 | 9% / 7% |
+| L9 | `--max-inc 8` | 0.047 | 0.245 | 10% / 7% |
+| B3 | (depth 2) token + hashed-n-gram codes, s=10 | 0.104 | 0.264 | 63% |
+| B2 | (flat oracle) BLT patch codes of +-2 tokens | 0.100 | 0.251 (0.265 @500k, drifting) | - |
+
+So a global literal cap is not the fix for layered overshoot, and neither BLT variant beats random
+token codes: the byte-level codes carry less token identity than the +-2 token codes they replace.
