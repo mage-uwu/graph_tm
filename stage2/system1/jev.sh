@@ -9,6 +9,7 @@
 set -uo pipefail
 R=$(cd "$(dirname "$0")/../.." && pwd); OUT=/root/jev
 mkdir -p $OUT
+exec 9> $OUT/.lock; flock -n 9 || { echo "jev.sh already running (lock $OUT/.lock)"; exit 1; }  # one run at a time
 log(){ echo "JEVPOD [$(date -u +%H:%M:%S)] $*" | tee -a $OUT/jev.log > /proc/1/fd/1; }
 export DEBIAN_FRONTEND=noninteractive HF_HUB_ENABLE_HF_TRANSFER=0 PYTHONUNBUFFERED=1
 log "started ($(git -C $R log --oneline -1)); $(nproc) vCPU, $(df -h /root | awk 'NR==2{print $4}') disk free"
