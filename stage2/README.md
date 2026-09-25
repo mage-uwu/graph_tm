@@ -282,3 +282,32 @@ bag of words only), and `tm` is the TM head. Test scores; masked-token test: acc
 
 Exported models (sha256-verified against the pod manifest): `models/graphtm/` holds the N1 final, 9M and 10M-window checkpoints,
 the N5 final and best models, the `dist` code embedding table, and the run logs `full.jsonl` / `results.jsonl`.
+
+## System 1: Jev-style decisions, LogicAE vs bert-tiny (`stage2/system1/jevft.py`, 2026-09-25)
+
+Both at 4.4M parameters, adapted end to end per question, one temperature per question fitted on dev.
+bert-tiny: `bert_head` = classic K-way head, `bert_pair` = score each option (`[CLS] text [SEP] option`).
+LogicAE: `ovr_*` = one yes/no LogicAE per option on the text alone (1000 steps each; one model for
+two-option / noul questions), `scratch` or `pt_keep` = run 1's pretrained checkpoint with the code
+temperature kept at 0.2. The joint text+option LogicAE form (emotion only) collapsed to a near-constant
+option (0.29-0.34), so the grid switched to one-vs-rest. Latency: ms per decision, CPU, 1 thread
+(LogicAE: fastlae interpreter, all K models; the compiled fastgen engine is ~10x faster).
+Raw: `stage2/system1/results/jev/` (results.jsonl, summary.md, jev.log).
+
+| task (type, K) | bert_head | bert_pair | LogicAE ovr scratch | LogicAE ovr pt_keep | gap (best LogicAE - best BERT) |
+|---|---|---|---|---|---|
+| jailbreak (noul, 2) | **0.970** | 0.966 | 0.943 | 0.920 | -2.7 |
+| agnews (choice, 4) | **0.906** | 0.890 | 0.883 | 0.821 | -2.3 |
+| sst2 (choice, 2) | **0.803** | 0.798 | 0.768 | 0.529 | -3.5 |
+| sst5 (score, 5; MAE) | **0.430** (0.77) | 0.231 (1.13) | 0.398 (0.91) | 0.364 (1.02) | -3.2 |
+| emotion (choice, 6) | 0.892 | **0.896** | 0.659 | 0.515 | -23.7 |
+| mean | **0.800** | 0.756 | 0.730 | 0.630 | -7.0 |
+
+- LogicAE from scratch, asked one yes/no question per option, is within 2-4 points of bert-tiny on
+  4 of 5 tasks, beats `bert_pair` on sst5, and is as well calibrated (ECE 0.02-0.08 vs 0.02-0.08).
+- Emotion (-24) is the outlier: six fine-grained classes from short texts, where word-level cues
+  overlap; the next test is the global view (stage2/fastlae/global_patch.py) on FAST_AE.
+- Run 1's pretraining hurts on every task (-2 to -24 vs scratch), even with the temperature kept:
+  the checkpoint (17-token windows, 3.2M windows) is not a useful starting point yet.
+- Training: the fast engine (stage2/fastlae, OMP_WAIT_POLICY=passive) took one LogicAE model 1000
+  steps in ~2.2 min (seq 48) vs ~64 min per 2000 steps before.
