@@ -1,7 +1,11 @@
 # LogicAE: status writeup (2026-09-25)
 
-**Goal:** a CPU-native, pure-logic text classifier that can take Jev/Laya-style decisions
-(choice, score, yes/no) about as well as BERT, and much faster.
+**Goal:** one CPU-native, pure-logic foundation model that, like Laya, answers any typed decision
+(choice, score, yes/no) about any record, about as well as BERT and much faster.
+
+**Correction:** the "decision tasks" below are public text datasets shaped like Jev decisions,
+not Jev/Laya's own decisions, and every LogicAE result is a per-task (often per-option) model,
+not one shared model. That is not yet the goal above.
 
 **Where it stands:** at 4.4M parameters LogicAE is within 2-4 points of bert-tiny on 5 of 6 decision
 tasks. The compiled engine runs one decision in 0.05-0.09 ms, 15-25x faster than bert-tiny on one CPU
@@ -29,6 +33,24 @@ Calibration after temperature fitting is comparable to bert-tiny (ECE 0.01-0.10 
 | bert-tiny (PyTorch fp32) | ~1.4 ms | ~2.4k texts/s |
 | LogicAE, original engine | 31-46 ms | 1.4-2.9k texts/s at batch 64 |
 | LogicAE, fastgen (compiled, same scores) | **0.05-0.09 ms** | **35k texts/s** (317k texts/s at 12 threads) |
+
+### Laya's own benchmark (typed-decisions): baselines only, LogicAE arm stopped
+
+`LocalLLaMA/typed-decisions`: 4 workflows x 5 questions, 1,200 train / 400 test records, 2,000 test
+decisions, gold = teacher argmax. Raw files in `stage2/system1/results/typed_decisions/`.
+
+| model | accuracy | yes/no | choice | score |
+|---|---|---|---|---|
+| Laya fine-tuned, 1 model for all questions (published) | 0.766 | | | |
+| teacher self-agreement (published) | 0.735 | | | |
+| TypeSafe Jev (published) | 0.727 | | | |
+| bag of words, 1 model per question | 0.682 | 0.788 | 0.643 | 0.630 |
+| bert-tiny, soft CE, 1 model per question | 0.661 | 0.765 | 0.630 | 0.606 |
+| majority per question | 0.484 | 0.642 | 0.418 | 0.414 |
+
+The LogicAE arm was stopped at 9/20 questions: it trained one yes/no model per option (~60 models),
+an ensemble that says nothing about a single logic foundation model. The right test is one LogicAE
+that reads record + question + option and answers all 20 questions (see remaining work).
 
 ## Key improvements, in order of impact
 
@@ -67,6 +89,11 @@ Calibration after temperature fitting is comparable to bert-tiny (ECE 0.01-0.10 
    per model; differences under ~1.5 points are within noise.
 
 ## Remaining work, highest expected value first
+
+0. **One shared model, Laya-style**: a single LogicAE over "record [SEP] question [SEP] option" (or
+   option-marker votes), trained on all 20 typed-decisions questions at once and scored against
+   Laya 0.766. The joint form collapsed on public datasets; the match bit (option tokens found in
+   the record) and a K-way head are the first things to try against that.
 
 1. **Native K-way vote head**: one model per question instead of K; cheaper, and probably more
    accurate on emotion and sst5. Small engine change.
