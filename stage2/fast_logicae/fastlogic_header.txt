@@ -1,0 +1,92 @@
+/* fastlogic.c: LogicAE in one file. A text classifier made only of logic gates: train it, pretrain it,
+ * adapt it, and run it as pure bit operations at ~0.05-0.09 ms per text on one CPU core. No dependencies
+ * beyond a C compiler with OpenMP.
+ *
+ *   gcc -O3 -march=native -std=c11 -fopenmp fastlogic.c -lm -o fastlogic
+ *   (-std=c11 on purpose: GNU mode lets gcc fuse a*b+c into FMA, which changes training bits)
+ *
+ * THE MODEL (defaults = the best recipe we have measured)
+ *   tokens     bert-base-uncased WordPiece ids (30,522). Each token has a learned 128-bit code (float logits,
+ *              sigmoid(z / temperature) in training, the sign bit when deployed).
+ *   trunk      16 blocks x 1024 channels. Each channel is a depth-3 tree of 2-input gates (7 gates, 8 leaves).
+ *              Each gate is a learned 4-entry truth table (4 float logits, sigmoid in training, a bit when deployed).
+ *              Leaves are wired (fixed at init) to a channel of the previous block at a token offset in
+ *              [-2,2] x dilation. Kernel 5, dilations 1,2,4,8 repeating. Every tree starts as a pass-through of
+ *              its first leaf (logits +-3), which is what makes 16 logic layers trainable.
+ *   head       OR-pool over position pairs, then 2 x 128 vote trees; class score = votes(1) - votes(0), a popcount.
+ *              Binary output: a K-way question = one yes/no model per option, logits = vote differences.
+ *   size       4.4M parameters (3.9M of them the token codes). The deployed .lth is integer-only.
+ *   pairs      --match 1: one input bit per position, "this token also occurs in the other [SEP] segment".
+ *              --global-every 4 --global-channels 128 --global-mean 1: every 4th block also sees majority-pooled
+ *              channels (fires at more than half of the valid positions). QNLI 0.580 -> 0.710 with both.
+ *
+ * THE TRAINING RECIPE
+ *   hard forward (straight-through), for train AND pretrain: the forward pass IS the deployed network (binary
+ *              codes, binary gate outputs, OR / majority pooling of bits). The backward pass differentiates the
+ *              gate interpolation at those binary points using the float master weights (the logits), and
+ *              passes the thresholds straight through. Float masters + Adam state are kept in .ltc checkpoints.
+ *              Why: a soft relaxation lets the model learn through sub-threshold values that hardening erases.
+ *              SST-2, 600 steps, hardened test accuracy:
+ *                  from scratch      soft 0.751 -> hard forward 0.764
+ *                  from pretraining  soft 0.509 (stuck at a constant answer) -> hard forward 0.669
+ *              and in masked-word pretraining the hard forward pass keeps the trunk alive: 10.6% dead
+ *              channels vs 66.9% soft at step 500, same masked-word accuracy.
+ *              `--soft-forward` restores the relaxation. `hardcheck` proves training forward == deployed
+ *              network, record by record.
+ *   optimiser  Adam, peak lr .025, cosine to 10%. Code temperature anneals 1.0 -> 0.2 over the first 80%.
+ *              Batch 32 (supervised) / 64 (pretraining), seq 64.
+ *   pretrain   masked-word objective (15% of positions, 80/10/10). Each masked position is decoded against
+ *              all 30,519 token codes (tied Hamming decoder + per-word bias), capped at 512 targets per batch
+ *              (--mlm-targets). Data: `-1 id id ...` lines, e.g. 64-token WikiText windows. Stream your corpus
+ *              into that file; do not load it into memory.
+ *   adapt      `train --load pretrained.ltc`: keeps the checkpoint's code temperature (the gates were trained
+ *              on near-binary codes), fresh Adam, hard forward. `--load-part codes|gates` loads half.
+ *              `revive` resets dead channels of a checkpoint to the pass-through init before adapting.
+ *   speed      training: deterministic parallel backward (phase 1 over outputs, phase 2 over input channels in
+ *              the serial order), ~0.4 s/step (16x1024, seq 64, batch 32, 8 cores). The binary sets
+ *              OMP_WAIT_POLICY=passive itself: spinning OpenMP threads cost 5-10x on SMT machines.
+ *              Results are byte-identical at any thread count; --resume is bit-exact.
+ *
+ * FAST INFERENCE (same scores as the reference engine, checked by `verify`)
+ *   interpreter  one text per 64-bit word: bit t = token position t, one word per channel (T <= 512).
+ *                A convolution tap is a shift. A gate is a branch-free mux from a 16-entry mask table.
+ *                --lanes 1/2/4/8 runs texts side by side in one vector register.
+ *   compiled     `fastlogic gen` writes the model as straight-line C (each gate one bitwise op, each leaf a
+ *                shift), then build this same file with it included:
+ *                gcc -O2 -march=native -std=c11 -fopenmp -DGEN_INC='"model.inc"' fastlogic.c -lm -o fastlogic_m
+ *                4-core Xeon, 64 tokens, 16x1024: 0.075 ms per text on 1 thread (reference 44.5 ms),
+ *                266k texts/s on 4 threads. bert-tiny on the same CPU: ~1.4 ms per text.
+ *
+ * DATA: `--format ids` lines `LABEL id id ...` (LABEL 0/1, or -1 unlabeled). Reserved ids: 0 PAD, 1 MASK,
+ * 2 UNK; [SEP] = 102. Longer records are cut to --seq, shorter ones PAD-filled.
+ *
+ * KNOWN LIMITS: masked-word pretraining does not yet beat scratch after adaptation (SST-2 0.669-0.688 vs
+ * 0.764). The dead-channel failure is understood and fixed by the hard forward pass; transfer is being
+ * vetted. Binary head. The compiled model needs T <= 64.
+ *
+ * FILE MAP: training engine (codes, gate trees, objectives, Adam, checkpoints, hardening, CLI) | fast inference
+ * (interpreter, lanes, compiler) | checks and tools (hardcheck, revive) | main | compiled-model hook.
+ */
+USAGE_BEGIN
+fastlogic: LogicAE in one file (see the header of fastlogic.c for the model and the recipe)
+
+train / adapt (hard forward by default; --soft-forward to opt out)
+  fastlogic train --data train.ids --val dev.ids --steps 1500 --eval-every 250 --save m.ltc --export m.lth
+  fastlogic train --load pre.ltc --data ... --save ft.ltc --export ft.lth   (keeps code temperature; --reset-temperature)
+     options: --seq 64 --batch 32 --lr .025 --steps N --seed 17 --threads N --stop-after STEP --resume m.ltc
+              --match 1 --global-every 4 --global-channels 128 --global-mean 1   (text pairs)
+              --load-part codes|gates   --vocab-size --code-bits --width --blocks --kernel --cycle --votes
+pretrain (masked words, hard forward; batch 64, 512 targets per batch)
+  fastlogic pretrain --data windows.ids --val val.ids --steps N --eval-every 500 --save pre.ltc
+fast inference (MODEL = .lth or .ltc; --lanes 8 --threads all by default)
+  fastlogic predict MODEL DATA.ids SEQ          {"row","label","votes"} per record
+  fastlogic verify  MODEL DATA.ids SEQ          every score == the reference engine, all lane widths
+  fastlogic bench   MODEL DATA.ids SEQ --batch B [--lanes L] [--threads N] [--repeats R]
+  fastlogic gen     MODEL DATA.ids SEQ model.inc   then: gcc ... -DGEN_INC='"model.inc"' fastlogic.c
+reference engine and tools
+  fastlogic eval --load MODEL --data DATA.ids --seq 64      hardened accuracy
+  fastlogic export --load m.ltc --out m.lth | info --load MODEL | predict-ref / bench-ref (reference engine)
+  fastlogic hardcheck m.ltc DATA.ids SEQ      training forward == deployed network, record by record
+  fastlogic revive m.ltc DATA.ids SEQ out.ltc reset dead channels to the pass-through init
+  fastlogic selftest | vocab --data text.tsv --out vocab.txt
+USAGE_END

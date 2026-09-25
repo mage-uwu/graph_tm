@@ -1,5 +1,30 @@
 # fast_logicae: standalone LogicAE (pure-logic text classifier), training + fast inference
 
+**`fastlogic.c` is the whole thing in one file** (nanoGPT style): training, masked-word pretraining,
+adaptation, fast bit-sliced inference, the model-to-C compiler, `hardcheck` and `revive`. Its header is
+the spec of the best recipe, and `fastlogic help` lists the commands.
+
+```
+gcc -O3 -march=native -std=c11 -fopenmp fastlogic.c -lm -o fastlogic
+./fastlogic train --data train.ids --val dev.ids --steps 1500 --eval-every 250 --save m.ltc --export m.lth
+./fastlogic predict m.lth test.ids 64
+```
+
+Defaults in `fastlogic.c` are the best recipe:
+- **Architecture:** 16x1024, 128-bit codes, kernel 5, cycle 4; seq 64, batch 32 (64 for pretraining),
+  512 masked targets per batch.
+- **Training:** hard forward for train *and* pretrain.
+- **Adaptation:** `--load` keeps the checkpoint's code temperature.
+
+The split files below (`logic_text.c`, `fastlae.c`, `fastgen.c`, `tools/`) are the pieces it is assembled from
+(`build_fastlogic.py`). Checked on assembly:
+- `fastlogic.c` checkpoints are byte-identical to the reference engine (soft mode) and to the patched engines
+  (hard mode, pretraining, adaptation), at any thread count.
+- `verify` passes, and `hardcheck` shows 0 mismatches.
+
+The remainder of this file documents the split tools; `lt` below behaves like `fastlogic`, except that pretraining
+there stays soft unless `--hard-forward`.
+
 Self-contained C: `logic_text.c` (training engine, generated from logic-bert + our patches), `fastlae.c` /
 `fastgen.c` (inference), `tools/hardcheck.c`. Needs only gcc with OpenMP.
 
