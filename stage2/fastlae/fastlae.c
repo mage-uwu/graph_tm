@@ -62,6 +62,16 @@ static inline void shift_##L(const V *in, V *out, int d, int NW) {              
         out[w] = r ? (lo >> (uint64_t)r) | (hi << (uint64_t)(64 - r)) : lo;                                  \
     }                                                                                                        \
 }                                                                                                            \
+/* global view (global_patch.py): channels W..W+G-1 = "channel c fired anywhere", on valid positions */   \
+static inline void global_##L(const Hard *h, V *x, const V *valid, int NW) {                                \
+    int W = h->c.width, G = h->c.gch;                                                                        \
+    for (int c = 0; c < G; c++) {                                                                            \
+        V nz = (V){0};                                                                                       \
+        for (int w = 0; w < NW; w++) nz |= x[(size_t)c * NW + w];                                            \
+        V m = (V)(nz != (V){0});                                                                             \
+        for (int w = 0; w < NW; w++) x[(size_t)(W + c) * NW + w] = m & valid[w];                             \
+    }                                                                                                        \
+}                                                                                                            \
 static inline V gate_##L(V a, V b, const uint64_t *m) {                                                     \
     V m0 = (V){0} + m[0], m1 = (V){0} + m[1], m2 = (V){0} + m[2], m3 = (V){0} + m[3];                      \
     V t0 = m0 ^ (b & (m0 ^ m1)), t1 = m2 ^ (b & (m2 ^ m3));                                                 \
@@ -100,7 +110,10 @@ static void run_##L(const Fast *F, const uint32_t *ids, int n, V *a, V *b, int64
     }                                                                                                        \
     V *cur = a, *nxt = b;                                                                                    \
     if (GEN_OK(NW)) GEN_BLOCKS(L)(cur, nxt, valid[0]);                                                      \
-    else for (int i = 0; i < h->c.blocks; i++) { layer_##L(F, h->l + i, cur, nxt, valid, NW); V *z = cur; cur = nxt; nxt = z; } \
+    else for (int i = 0; i < h->c.blocks; i++) {                                                            \
+        if (gblock(&h->c, i)) global_##L(h, cur, valid, NW);                                                 \
+        layer_##L(F, h->l + i, cur, nxt, valid, NW); V *z = cur; cur = nxt; nxt = z;                         \
+    }                                                                                                        \
     if (GEN_OK(NW) && h->c.blocks % 2) { V *z = cur; cur = nxt; nxt = z; }                                   \
     /* pairwise OR pool over positions: pooled bit u = bit 2u | bit 2u+1 */                                  \
     int W = h->c.width;                                                                                      \
@@ -131,6 +144,7 @@ static void run_##L(const Fast *F, const uint32_t *ids, int n, V *a, V *b, int64
 static void batch_##L(const Fast *F, const uint32_t *ids, int B, int64_t *scores) {                         \
     int T = F->T, maxC = F->h->c.bits > F->h->c.width ? F->h->c.bits : F->h->c.width;                      \
     if (maxC < 2 * F->h->c.votes) maxC = 2 * F->h->c.votes;                                                   \
+    if (F->h->c.gevery && maxC < F->h->c.width + F->h->c.gch) maxC = F->h->c.width + F->h->c.gch;             \
     int G = (B + L - 1) / L;                                                                                 \
     _Pragma("omp parallel")                                                                                  \
     {                                                                                                        \
@@ -264,7 +278,13 @@ int main(int argc, char **argv) {
             fprintf(o, "}\n");
         }
         fprintf(o, "static void GEN_L(blocks)(V *a, V *b, V valid) {\n");
-        for (int i = 0; i < h->c.blocks; i++) fprintf(o, "  GEN_L(blk%d)(%s, %s, valid);\n", i, i % 2 ? "b" : "a", i % 2 ? "a" : "b");
+        for (int i = 0; i < h->c.blocks; i++) {
+            const char *src = i % 2 ? "b" : "a";
+            if (gblock(&h->c, i))  /* global view: OR-pool the first G channels into W..W+G-1 */
+                fprintf(o, "  { const V Z = {0}; for (int c = 0; c < %d; c++) %s[%d + c] = (V)(%s[c] != Z) & valid; }\n",
+                        h->c.gch, src, h->c.width, src);
+            fprintf(o, "  GEN_L(blk%d)(%s, %s, valid);\n", i, src, i % 2 ? "a" : "b");
+        }
         fprintf(o, "}\n");
         fclose(o);
         printf("{\"generated\":\"%s\",\"blocks\":%d,\"outputs\":%d}\n", argv[5], h->c.blocks, h->c.blocks * h->c.width);

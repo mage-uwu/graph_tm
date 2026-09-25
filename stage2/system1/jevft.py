@@ -19,7 +19,8 @@ Arms (each task):
   lae_pt        LogicAE pretrained -> adapted as run 1 did (temperature reset to 1, 1 -> 0.2)
   lae_scratch   LogicAE from scratch, same steps (the control pretraining must beat)
   lae_ovr_*     one-vs-rest (default LogicAE arms since emotion showed the joint form collapses): one
-                yes/no LogicAE per option on the state alone, JEV_OVR_STEPS each (_pt_keep / _pt / _scratch)
+                yes/no LogicAE per option on the state alone, JEV_OVR_STEPS each (_pt_keep / _pt / _scratch;
+                _scratch_g4 / _g2 add the global view of stage2/fastlae/global_patch.py)
 LogicAE arms train JEV_STEPS steps (batch 32, eval every 250) and are scored with the dev-best
 hardened model (.lth.best; the deployable bit-parallel path). Latency: one decision = one state
 with all K options, CPU, 1 thread, steady state.
@@ -136,19 +137,19 @@ def build():
     if not os.path.exists(os.path.join(src, "logic-bert", "src", "logic_text.c")):
         with tarfile.open(LB_TGZ) as t:
             t.extractall(src)
-    if not os.path.exists(FL):
-        subprocess.run(["gcc", "-O3", "-march=native", "-std=gnu11", "-fopenmp", "-Wno-unknown-pragmas",
-                        "-I" + os.path.join(src, "logic-bert", "src"), os.path.join(REPO, "stage2", "fastlae", "fastlae.c"),
-                        "-lm", "-o", FL], check=True)
-    if os.path.exists(LT):
+    if os.path.exists(LT) and os.path.exists(FL):
         return
     patched = os.path.join(OUT, "logic_text.c")
     subprocess.run([sys.executable, os.path.join(REPO, "stage2", "logicae", "transfer_patch.py"),
                     os.path.join(src, "logic-bert", "src", "logic_text.c"), patched], check=True)
-    # fasttrain (stage2/fastlae): parallel backward pass, checkpoints byte-identical to the unpatched engine
+    # global view (stage2/fastlae/global_patch.py; a no-op unless --global-every is given), then fasttrain
+    # (parallel backward pass); with the options off, checkpoints are byte-identical to the unpatched engine
+    subprocess.run([sys.executable, os.path.join(REPO, "stage2", "fastlae", "global_patch.py"), patched, patched], check=True)
     subprocess.run([sys.executable, os.path.join(REPO, "stage2", "fastlae", "fasttrain_patch.py"), patched, patched], check=True)
     subprocess.run(["gcc", "-O3", "-march=native", "-std=c11", "-fopenmp", "-Wno-unknown-pragmas", patched, "-lm", "-o", LT],
                    check=True)
+    subprocess.run(["gcc", "-O3", "-march=native", "-std=gnu11", "-fopenmp", "-Wno-unknown-pragmas", "-I" + OUT,
+                    os.path.join(REPO, "stage2", "fastlae", "fastlae.c"), "-lm", "-o", FL], check=True)
     r = subprocess.run([LT, "selftest"], capture_output=True, text=True)
     say(f"build: {(r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]}")
 
@@ -213,7 +214,10 @@ def lae_ovr_arm(task, arm, D, seq, tdir):
             d = D[split]
             SH.ids_file(files[split], [state(d, i, seq) for i in range(len(d["y"]))], np.asarray(d["y"]) * 0, seq)
     extra = {"lae_ovr_pt_keep": ["--load", PT, "--keep-temperature"], "lae_ovr_pt": ["--load", PT],
-             "lae_ovr_scratch": SH.LAE_ARCH}[arm]
+             "lae_ovr_scratch": SH.LAE_ARCH,
+             # global view (global_patch.py): blocks 4, 8, 12 (g4) / every 2nd block (g2) also see OR-pooled channels
+             "lae_ovr_scratch_g4": SH.LAE_ARCH + ["--global-every", "4", "--global-channels", "128"],
+             "lae_ovr_scratch_g2": SH.LAE_ARCH + ["--global-every", "2", "--global-channels", "256"]}[arm]
     ytr, ydv = np.asarray(D["train"]["y"]), np.asarray(D["dev"]["y"])
     trs = [state(D["train"], i, seq) for i in range(len(ytr))]
     zd, zt, lats, curves, t0 = [], [], [], [], time.time()
