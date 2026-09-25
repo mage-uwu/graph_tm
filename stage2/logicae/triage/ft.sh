@@ -20,4 +20,9 @@ for v in ${VARIANTS:-scratch pt keep codes gates revive}; do case $v in
   gates)   run gates --load $PT --load-part gates --keep-temperature;;
   revive)  run revive --load $S/pt_revived.ltc --keep-temperature;;
   revive_t1) run revive_t1 --load $S/pt_revived.ltc;;
+  # straight-through (hard forward, ../hard_patch.py; $S/lt/lt must be built with it)
+  h_scratch) run h_scratch $ARCH --hard-forward;;
+  h_pt)      run h_pt --load $PT --keep-temperature --hard-forward;;
+  h_pt_t1)   run h_pt_t1 --load $PT --hard-forward;;
+  h_revive)  run h_revive --load $S/pt_revived.ltc --keep-temperature --hard-forward;;
 esac; done

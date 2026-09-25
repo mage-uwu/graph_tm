@@ -52,3 +52,22 @@ fraction + this fine-tune: (1) the masked-word readout reads only 223 of 1024 la
 (e.g. replaced-token detection); (2) a balance penalty on gate outputs like the codes' row/column balance;
 (3) periodic re-initialization of dead channels during pretraining; (4) skip channels copied through
 every block.
+
+## Straight-through fine-tuning (`../hard_patch.py`, `--hard-forward`)
+
+Forward = the hardened network exactly (binary codes, binary gate outputs; checked: training-mode accuracy
+equals the deployed .lth). Backward = the multilinear gate derivative at those binary points with the float
+corner values, thresholds passed straight through. Float master weights and Adam kept. Flag off: checkpoints
+byte-identical to the unpatched build. Same SST-2 setup (600 steps, hard accuracy):
+
+| start | soft training: test | straight-through: train / dev500 / **test** | straight-through dev curve |
+|---|---|---|---|
+| scratch | 0.751 | 0.792 / 0.756 / **0.764** | .514 .544 .628 .732 .748 .756 |
+| pretrained (keep temperature) | 0.509 | 0.678 / 0.674 / **0.669** | .538 .552 .592 .584 .624 .674 |
+| pretrained, dead channels reset | 0.653 | 0.740 / 0.726 / **0.688** | .598 .646 .646 .702 .716 .726 |
+
+- Training against the hard network removes the constant-answer failure: pretrained 0.509 -> 0.669 (+16).
+- It is also better from scratch (0.751 -> 0.764): adaptation should always train the network that is deployed.
+- Pretrained is still below scratch at 600 steps (0.688 vs 0.764 best), but the gap shrank from 24 to 8 points,
+  and pretrained starts faster (dev 0.598 vs 0.514 at step 100). What remains is the dead / saturated trunk
+  that pretraining leaves: fix it in pretraining (see Next), and pretrain with --hard-forward as well.
