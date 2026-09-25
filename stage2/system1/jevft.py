@@ -18,6 +18,8 @@ Arms (each task):
                 (transfer_patch --keep-temperature: no reset to soft codes)
   lae_pt        LogicAE pretrained -> adapted as run 1 did (temperature reset to 1, 1 -> 0.2)
   lae_scratch   LogicAE from scratch, same steps (the control pretraining must beat)
+  lae_ovr_*     one-vs-rest (default LogicAE arms since emotion showed the joint form collapses): one
+                yes/no LogicAE per option on the state alone, JEV_OVR_STEPS each (_pt_keep / _pt / _scratch)
 LogicAE arms train JEV_STEPS steps (batch 32, eval every 250) and are scored with the dev-best
 hardened model (.lth.best; the deployable bit-parallel path). Latency: one decision = one state
 with all K options, CPU, 1 thread, steady state.
@@ -52,8 +54,9 @@ import shootout as SH  # noqa: E402
 
 T = int(os.environ["THREADS"])
 TASKS = os.environ.get("JEV_TASKS", "emotion,agnews,sst5,sst2,jailbreak").split(",")
-ARMS = os.environ.get("JEV_ARMS", "bert_pair,bert_head,lae_pt_keep,lae_pt,lae_scratch").split(",")
+ARMS = os.environ.get("JEV_ARMS", "bert_pair,bert_head,lae_ovr_pt_keep,lae_ovr_scratch").split(",")
 STEPS = int(os.environ.get("JEV_STEPS", 2000))
+OVR_STEPS = int(os.environ.get("JEV_OVR_STEPS", 1000))  # per yes/no model (K of them per choice / score question)
 OUT = os.environ.get("JEV_OUT", "/root/jev")
 PT = os.environ.get("PT", os.path.join(REPO, "models", "logicae", "pt.ltc"))
 LB_TGZ = os.environ.get("LB_TGZ", os.path.join(REPO, "logic-bert.tar.gz"))
@@ -62,6 +65,7 @@ EXPORT = os.environ.get("JEV_EXPORT", "/root/jev_exports")
 SEQ = {"sst2": 48, "sst5": 48, "emotion": 48, "agnews": 64, "jailbreak": 64, "banking77": 48, "spam": 48, "qnli": 96}
 SEP = SH.SEP_ID
 LT = os.path.join(OUT, "ltx")
+FL = os.path.join(OUT, "fastlae")  # stage2/fastlae inference engine (latency; scores == lt predict)
 
 
 def say(msg):
@@ -128,11 +132,16 @@ def to_logits(score, K, noul):
 
 # ------------------------------------------------------------------ LogicAE arms
 def build():
+    src = os.path.join(OUT, "lb")
+    if not os.path.exists(os.path.join(src, "logic-bert", "src", "logic_text.c")):
+        with tarfile.open(LB_TGZ) as t:
+            t.extractall(src)
+    if not os.path.exists(FL):
+        subprocess.run(["gcc", "-O3", "-march=native", "-std=gnu11", "-fopenmp", "-Wno-unknown-pragmas",
+                        "-I" + os.path.join(src, "logic-bert", "src"), os.path.join(REPO, "stage2", "fastlae", "fastlae.c"),
+                        "-lm", "-o", FL], check=True)
     if os.path.exists(LT):
         return
-    src = os.path.join(OUT, "lb")
-    with tarfile.open(LB_TGZ) as t:
-        t.extractall(src)
     patched = os.path.join(OUT, "logic_text.c")
     subprocess.run([sys.executable, os.path.join(REPO, "stage2", "logicae", "transfer_patch.py"),
                     os.path.join(src, "logic-bert", "src", "logic_text.c"), patched], check=True)
@@ -188,6 +197,63 @@ def lae_arm(task, arm, D, opts, seq, tdir):
             os.remove(m + s)
     return zd, zt, {"train_minutes": round(train_min, 1), "model": os.path.basename(lth), "dev_curve": curve,
                     "notes": notes, "latency_ms_1thread": round(lat, 3)}
+
+
+def lae_ovr_arm(task, arm, D, seq, tdir):
+    """one-vs-rest: one yes/no LogicAE per option on the state alone ("is this text about sports?"),
+    K-way logits = the K models' vote differences. Two-option and noul questions need one model.
+    Each model trains on the positives (duplicated to balance) + all negatives, OVR_STEPS steps."""
+    spec = D["spec"]
+    K = len(spec["options"])
+    ks = [None] if spec["type"] == "noul" or K == 2 else list(range(K))
+    files = {}
+    for split in ("dev", "test"):
+        files[split] = os.path.join(tdir, f"ovr_{split}.ids")
+        if not os.path.exists(files[split]):
+            d = D[split]
+            SH.ids_file(files[split], [state(d, i, seq) for i in range(len(d["y"]))], np.asarray(d["y"]) * 0, seq)
+    extra = {"lae_ovr_pt_keep": ["--load", PT, "--keep-temperature"], "lae_ovr_pt": ["--load", PT],
+             "lae_ovr_scratch": SH.LAE_ARCH}[arm]
+    ytr, ydv = np.asarray(D["train"]["y"]), np.asarray(D["dev"]["y"])
+    trs = [state(D["train"], i, seq) for i in range(len(ytr))]
+    zd, zt, lats, curves, t0 = [], [], [], [], time.time()
+    for k in ks:
+        tag = f"{arm}_{'bin' if k is None else k}"
+        m = os.path.join(tdir, tag)
+        yb = ytr if k is None else (ytr == k).astype(np.int64)
+        idx = np.arange(len(yb))
+        if k is not None:  # balance: repeat positives up to the negative count (seeded)
+            pos, neg = idx[yb == 1], idx[yb == 0]
+            rep = np.random.default_rng(31 + k).choice(pos, size=max(len(neg), len(pos)), replace=len(pos) < len(neg)) if len(pos) else pos
+            idx = np.sort(np.concatenate([neg, rep]))
+        SH.ids_file(m + "_train.ids", [trs[i] for i in idx], yb[idx], seq)
+        SH.ids_file(m + "_val.ids", [state(D["dev"], i, seq) for i in range(len(ydv))], ydv if k is None else (ydv == k).astype(np.int64), seq)
+        with open(m + ".log", "w") as log:
+            subprocess.run([LT, "train", "--threads", str(T), "--data", m + "_train.ids", "--val", m + "_val.ids", "--format", "ids",
+                            "--seq", str(seq), "--batch", "32", "--steps", str(OVR_STEPS), "--eval-every", "250", "--seed", "17",
+                            "--save", m + ".ltc", "--export", m + ".lth", *extra], stderr=log, check=True)
+        lth = m + ".lth.best" if os.path.exists(m + ".lth.best") else m + ".lth"
+        zd.append(lae_votes(lth, files["dev"], seq))
+        zt.append(lae_votes(lth, files["test"], seq))
+        txt = open(m + ".log").read()
+        curves.append([(int(a), float(b)) for a, b in re.findall(r'"step":(\d+)[^\n]*"val_hard_accuracy":([0-9.]+)', txt)][-1:])
+        r = subprocess.run([FL, "bench", lth, files["test"], str(seq), "--batch", "1", "--lanes", "1", "--threads", "1", "--repeats", "30"],
+                           capture_output=True, text=True)
+        try:
+            lats.append(json.loads(r.stdout.strip().splitlines()[-1])["fast_ms"])
+        except (IndexError, ValueError, KeyError):
+            lats.append(float("nan"))
+        for s in (".ltc", ".ltc.best"):
+            if os.path.exists(m + s):
+                os.remove(m + s)
+        say(f"{task} {arm}: model {tag} done ({(time.time() - t0) / 60:.1f} min so far; val acc {curves[-1]})")
+    if ks == [None]:
+        zd, zt = to_logits(zd[0], 2, True), to_logits(zt[0], 2, True)
+    else:
+        zd, zt = np.stack(zd, 1), np.stack(zt, 1)
+    return zd, zt, {"train_minutes": round((time.time() - t0) / 60, 1), "models": len(ks), "steps_per_model": OVR_STEPS,
+                    "val_acc_last": curves, "latency_ms_1thread_fastlae": round(float(np.sum(lats)), 4),
+                    "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}
 
 
 # ------------------------------------------------------------------ bert arms
@@ -291,7 +357,7 @@ def summary():
         for j, r in enumerate(rs, 1):
             m = r["test"]
             out.append(f"| {j} | {r['arm']} | {m['acc']:.4f} | {m['ece']:.4f} | {m['nll']:.4f} | {m['brier']:.4f} | "
-                       f"{m['acc_at_50cov']:.4f} | {m.get('mae', '-')} | {r['info'].get('latency_ms_1thread', '-')} |")
+                       f"{m['acc_at_50cov']:.4f} | {m.get('mae', '-')} | {r['info'].get('latency_ms_1thread', r['info'].get('latency_ms_1thread_fastlae', '-'))} |")
         out.append("")
     arms = list(dict.fromkeys(r["arm"] for r in res))
     tasks = list(dict.fromkeys(r["task"] for r in res))
@@ -326,7 +392,9 @@ def main():
                 continue
             say(f"{task} {arm}: start")
             try:
-                if arm.startswith("lae"):
+                if arm.startswith("lae_ovr"):
+                    zd, zt, info = lae_ovr_arm(task, arm, D, seq, tdir)
+                elif arm.startswith("lae"):
                     zd, zt, info = lae_arm(task, arm, D, opts, seq, tdir)
                 else:
                     zd, zt, info = {"bert_pair": bert_pair, "bert_head": bert_head}[arm](task, D, opts, seq)
