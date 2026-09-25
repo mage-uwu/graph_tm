@@ -9,6 +9,7 @@
  *                                                       never-trained vote head): per-layer mean |grad|, gate
  *                                                       saturation, codes' mean |grad|
  * --fresh: the checkpoint's config, freshly initialized (seed 17): what scratch fine-tuning starts from.
+ * --hard (build with -DDIAG_HARD against a hard_patch.py source): the hardened forward pass.
  * Build: gcc -O3 -march=native -std=c11 -fopenmp -I<logic-bert>/src diag.c -lm -o diag */
 #define LOGIC_NO_MAIN
 #include "logic_text.c"
@@ -21,6 +22,9 @@ static Net *get(int argc,char **argv,int stage){
         n=net_new(c,1,1,17);n->vocab=v;n->temperature=1.f;t=1.f;
     }
     for(int i=3;i+1<argc;i++)if(!strcmp(argv[i],"--temp"))t=parse_float(argv[i+1]);
+#ifdef DIAG_HARD
+    for(int i=3;i<argc;i++)if(!strcmp(argv[i],"--hard"))g_hard_fwd=1;  /* hard_patch.py build: hardened forward */
+#endif
     n->temperature=t;n->c.stage=stage;refresh(n);
     fprintf(stderr,"diag: %s%s temperature %.3f blocks %d width %d bits %d\n",argv[2],
             n->c.vocab?"":"",t,n->c.blocks,n->c.width,n->c.bits);
