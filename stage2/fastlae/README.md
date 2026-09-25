@@ -21,7 +21,32 @@ parallelizes its backward pass over batch chunks of 16, so batch 32 keeps 2 thre
 | 512 (8 lanes) | 274 ms | ~61 ms | **6.9 ms** (74k texts/s) | ~370 ms |
 
 Training (seq 48, batch 32): 0.85 s/step -> 0.39 s/step at 4 threads, byte-identical checkpoints.
-`bench.sh` measures all of it at 16 threads on a pod, with bert-tiny on the same CPU.
+## FAST_AE pod (AMD EPYC 9754, 16 vCPU = 8 cores x 2 SMT, shared host; `bench.sh`, `threads.sh`)
+
+Inference, 64-token inputs, 1 thread, all scores == reference:
+
+| texts per call | reference | fastlae | fastgen |
+|---|---|---|---|
+| 1 | 45.6 ms | 1.12 ms | **0.090 ms** (506x) |
+| 6 | 46.3 ms | 6.4 ms | **0.31 ms** |
+| 64 | 46.2 ms | 11.0 ms | **2.1 ms** |
+| 4096 | 3513 ms | 679 ms | **116 ms** (35k texts/s) |
+
+fastgen, batch 4096, OMP_WAIT_POLICY=passive: 38k texts/s (1 thread), 150k (4), 211k (8), **317k (12)**.
+
+Training (supervised seq 64, batch 32; checkpoints byte-identical to the reference):
+
+| threads | reference, default OpenMP | fasttrain, default (spin) | fasttrain, OMP_WAIT_POLICY=passive |
+|---|---|---|---|
+| 1 | | 1.53 s/step | 1.60 |
+| 8 | | 1.20 | 0.54 |
+| 12 | | 3.55 | **0.40** |
+| 16 | 2.53 | 4.34 | 0.42 |
+
+**Spinning OpenMP threads are the pods' biggest slowdown**: on 8 shared cores with SMT, 16 spinning
+threads starve the working ones (no cgroup throttling: cpu.max unlimited). Always run the engines
+with `OMP_WAIT_POLICY=passive`. MLM pretraining (seq 17, batch 256) is dominated by the 30k-way
+vocabulary softmax and barely changes (4.42 -> 4.38 s/step at 16 threads, default policy).
 
 Build: `gcc -O3 -march=native -std=gnu11 -fopenmp -I<logic-bert>/src fastlae.c -lm -o fastlae`;
 `fastlae gen MODEL.lth DATA.ids 64 model.inc` then

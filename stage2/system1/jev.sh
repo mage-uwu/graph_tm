@@ -11,7 +11,7 @@ R=$(cd "$(dirname "$0")/../.." && pwd); OUT=/root/jev
 mkdir -p $OUT
 exec 9> $OUT/.lock; flock -n 9 || { echo "jev.sh already running (lock $OUT/.lock)"; exit 1; }  # one run at a time
 log(){ echo "JEVPOD [$(date -u +%H:%M:%S)] $*" | tee -a $OUT/jev.log > /proc/1/fd/1; }
-export DEBIAN_FRONTEND=noninteractive HF_HUB_ENABLE_HF_TRANSFER=0 PYTHONUNBUFFERED=1
+export DEBIAN_FRONTEND=noninteractive HF_HUB_ENABLE_HF_TRANSFER=0 PYTHONUNBUFFERED=1 OMP_WAIT_POLICY=passive
 log "started ($(git -C $R log --oneline -1)); $(nproc) vCPU, $(df -h /root | awk 'NR==2{print $4}') disk free"
 if ! command -v gcc >/dev/null || ! python3 -m pip --version >/dev/null 2>&1; then
   apt-get update -qq && apt-get install -y -qq build-essential python3 python3-pip >/dev/null 2>&1 || log "apt-get FAILED"

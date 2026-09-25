@@ -40,6 +40,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+os.environ.setdefault("OMP_WAIT_POLICY", "passive")  # spinning OpenMP threads cost 5-10x on shared 8-core/16-thread pods (stage2/fastlae)
 os.environ.setdefault("THREADS", str(min(16, os.cpu_count() or 1)))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, ".."))
@@ -135,6 +136,8 @@ def build():
     patched = os.path.join(OUT, "logic_text.c")
     subprocess.run([sys.executable, os.path.join(REPO, "stage2", "logicae", "transfer_patch.py"),
                     os.path.join(src, "logic-bert", "src", "logic_text.c"), patched], check=True)
+    # fasttrain (stage2/fastlae): parallel backward pass, checkpoints byte-identical to the unpatched engine
+    subprocess.run([sys.executable, os.path.join(REPO, "stage2", "fastlae", "fasttrain_patch.py"), patched, patched], check=True)
     subprocess.run(["gcc", "-O3", "-march=native", "-std=c11", "-fopenmp", "-Wno-unknown-pragmas", patched, "-lm", "-o", LT],
                    check=True)
     r = subprocess.run([LT, "selftest"], capture_output=True, text=True)
