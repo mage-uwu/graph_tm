@@ -66,9 +66,19 @@ static inline void shift_##L(const V *in, V *out, int d, int NW) {              
 static inline void global_##L(const Hard *h, V *x, const V *valid, int NW) {                                \
     int W = h->c.width, G = h->c.gch;                                                                        \
     for (int c = 0; c < G; c++) {                                                                            \
-        V nz = (V){0};                                                                                       \
-        for (int w = 0; w < NW; w++) nz |= x[(size_t)c * NW + w];                                            \
-        V m = (V)(nz != (V){0});                                                                             \
+        V m;                                                                                                 \
+        if (h->c.gmean) {  /* majority: 2 x fired positions > valid positions, per lane */                   \
+            m = (V){0};                                                                                      \
+            for (int e = 0; e < L; e++) {                                                                    \
+                int cnt = 0, nv = 0;                                                                         \
+                for (int w = 0; w < NW; w++) { cnt += __builtin_popcountll(x[(size_t)c * NW + w][e]); nv += __builtin_popcountll(valid[w][e]); } \
+                m[e] = 2 * cnt > nv ? ~UINT64_C(0) : 0;                                                      \
+            }                                                                                                \
+        } else {                                                                                             \
+            V nz = (V){0};                                                                                   \
+            for (int w = 0; w < NW; w++) nz |= x[(size_t)c * NW + w];                                        \
+            m = (V)(nz != (V){0});                                                                           \
+        }                                                                                                    \
         for (int w = 0; w < NW; w++) x[(size_t)(W + c) * NW + w] = m & valid[w];                             \
     }                                                                                                        \
 }                                                                                                            \
@@ -95,7 +105,9 @@ static void run_##L(const Fast *F, const uint32_t *ids, int n, V *a, V *b, int64
     const Hard *h = F->h;                                                                                    \
     int T = F->T, NW = F->NW, U = F->U, NWU = F->NWU, C = h->c.bits, Q = (C + 63) / 64;                     \
     V valid[MAXNW], pvalid[MAXNW];                                                                           \
-    memset(a, 0, sizeof(V) * (size_t)C * NW);                                                                \
+    memset(a, 0, sizeof(V) * (size_t)(C + h->c.match) * NW);                                                  \
+    uint8_t mb[8 * 64 * MAXNW];  /* match bits (global_patch.py --match), L x T */                              \
+    if (h->c.match) { memset(mb, 0, sizeof mb); match_bits(ids, n, T, mb); }                                 \
     memset(valid, 0, sizeof valid);                                                                          \
     for (int e = 0; e < n; e++) for (int t = 0; t < T; t++) {                                               \
         uint32_t id = ids[(size_t)e * T + t];                                                                \
@@ -103,6 +115,7 @@ static void run_##L(const Fast *F, const uint32_t *ids, int n, V *a, V *b, int64
         if (!id) continue;                                                                                   \
         uint64_t bit = UINT64_C(1) << (t % 64);                                                              \
         valid[t / 64][e] |= bit;                                                                             \
+        if (h->c.match && mb[(size_t)e * T + t]) a[(size_t)C * NW + t / 64][e] |= bit;                       \
         for (int q = 0; q < Q; q++) {                                                                        \
             uint64_t code = h->codes[(size_t)id * Q + q];                                                    \
             while (code) { int c = q * 64 + lowbit(code); if (c < C) a[(size_t)c * NW + t / 64][e] |= bit; code &= code - 1; } \
@@ -145,6 +158,7 @@ static void batch_##L(const Fast *F, const uint32_t *ids, int B, int64_t *scores
     int T = F->T, maxC = F->h->c.bits > F->h->c.width ? F->h->c.bits : F->h->c.width;                      \
     if (maxC < 2 * F->h->c.votes) maxC = 2 * F->h->c.votes;                                                   \
     if (F->h->c.gevery && maxC < F->h->c.width + F->h->c.gch) maxC = F->h->c.width + F->h->c.gch;             \
+    if (maxC < F->h->c.bits + F->h->c.match) maxC = F->h->c.bits + F->h->c.match;                             \
     int G = (B + L - 1) / L;                                                                                 \
     _Pragma("omp parallel")                                                                                  \
     {                                                                                                        \
@@ -281,8 +295,13 @@ int main(int argc, char **argv) {
         for (int i = 0; i < h->c.blocks; i++) {
             const char *src = i % 2 ? "b" : "a";
             if (gblock(&h->c, i))  /* global view: OR-pool the first G channels into W..W+G-1 */
-                fprintf(o, "  { const V Z = {0}; for (int c = 0; c < %d; c++) %s[%d + c] = (V)(%s[c] != Z) & valid; }\n",
-                        h->c.gch, src, h->c.width, src);
+                if (h->c.gmean)
+                    fprintf(o, "  for (int c = 0; c < %d; c++) { V m = {0}; for (int e = 0; e < (int)(sizeof(V) / 8); e++)"
+                               " m[e] = 2 * __builtin_popcountll(%s[c][e]) > __builtin_popcountll(valid[e]) ? ~0ULL : 0; %s[%d + c] = m & valid; }\n",
+                            h->c.gch, src, src, h->c.width);
+                else
+                    fprintf(o, "  { const V Z = {0}; for (int c = 0; c < %d; c++) %s[%d + c] = (V)(%s[c] != Z) & valid; }\n",
+                            h->c.gch, src, h->c.width, src);
             fprintf(o, "  GEN_L(blk%d)(%s, %s, valid);\n", i, src, i % 2 ? "a" : "b");
         }
         fprintf(o, "}\n");
