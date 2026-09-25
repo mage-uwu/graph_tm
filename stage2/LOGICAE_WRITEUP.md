@@ -110,7 +110,14 @@ that reads record + question + option and answers all 20 questions (see remainin
    - An end-to-end CPU serving demo (batching, tokenizer cost included).
 6. **Housekeeping**:
    - The logicAE pod's shootout / 2x-scale results are still on the pod (logs unreadable from here).
-   - ENGINEER_SQUAD and FAST_AE are idle and can be stopped.
+   - ENGINEER_SQUAD and FAST_AE no longer exist, and their hardened models went with them (the one-model-per-option
+     runs never copied them off the pod). Their results/logs are in `stage2/system1/results/`. Training is
+     deterministic (fixed seed 17, counter-based randomness, thread- and ISA-independent), so the best models can be
+     rebuilt bit-exactly on any CPU pod with `FAST_SCRIPT=global.sh FAST_TOKEN=<24 hex>`, narrowed per task:
+     `JEV_TASKS=qnli JEV_ARMS=lae_ovr_scratch_gm4` (0.710), `JEV_TASKS=sst2 JEV_ARMS=lae_ovr_scratch` (0.780),
+     `JEV_TASKS=emotion JEV_ARMS=lae_ovr_scratch_m` (0.708); check the accuracies against `results/global_v2/`.
+   - `jevft.py` / `laya_td.py` now publish every model to the pod's :8888 export as soon as it is trained, and
+     `stage2/fastlae/bundle.sh` packs everything a pod still holds; download before stopping a pod.
 
 ## Where things are
 

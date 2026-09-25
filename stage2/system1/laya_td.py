@@ -200,6 +200,7 @@ def arm_lae(e, key, extra):
             subprocess.run([J.LT, "train", "--threads", str(J.T), "--data", m + "_train.ids", "--format", "ids", "--seq", str(SEQ),
                             "--batch", "32", "--steps", str(STEPS), "--eval-every", str(STEPS), "--seed", "17",
                             "--save", m + ".ltc", "--export", m + ".lth", *ARCH, *extra], stderr=log, check=True)
+        J.publish([(m + ".lth", os.path.basename(m) + ".lth")])  # downloadable as soon as it exists (pod disks are not durable)
         zc.append(J.lae_votes(m + ".lth", files["calib"], SEQ))
         zt.append(J.lae_votes(m + ".lth", files["test"], SEQ))
         r = subprocess.run([J.FL, "bench", m + ".lth", files["test"], str(SEQ), "--batch", "1", "--lanes", "1", "--threads", "1",

@@ -262,6 +262,7 @@ def lae_ovr_arm(task, arm, D, seq, tdir):
         for s in (".ltc", ".ltc.best"):
             if os.path.exists(m + s):
                 os.remove(m + s)
+        publish([(lth, f"{task}_{tag}.lth")])  # every finished model is downloadable while the pod runs (pod disks are not durable)
         say(f"{task} {arm}: model {tag} done ({(time.time() - t0) / 60:.1f} min so far; val acc {curves[-1]})")
     if ks == [None]:
         zd, zt = to_logits(zd[0], 2, True), to_logits(zt[0], 2, True)
