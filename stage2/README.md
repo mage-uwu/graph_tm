@@ -311,3 +311,24 @@ Raw: `stage2/system1/results/jev/` (results.jsonl, summary.md, jev.log).
   the checkpoint (17-token windows, 3.2M windows) is not a useful starting point yet.
 - Training: the fast engine (stage2/fastlae, OMP_WAIT_POLICY=passive) took one LogicAE model 1000
   steps in ~2.2 min (seq 48) vs ~64 min per 2000 steps before.
+
+## Global view for LogicAE (`stage2/fastlae/global_patch.py`, FAST_AE, 2026-09-25)
+
+LogicAE blocks only see nearby tokens. Same harness as above (one-vs-rest LogicAE from scratch,
+1500 steps per model, 16 blocks x 1024), with opt-in whole-text inputs; all variants hardened and
+checked score-for-score against the fast engine (stage2/fastlae). Raw: `stage2/system1/results/global_v1/`, `global_v2/`.
+
+| variant | QNLI | SST-2 | emotion |
+|---|---|---|---|
+| bert-tiny (shared objective) | 0.750 | 0.798 | 0.896 |
+| LogicAE, no global view | 0.580 | 0.780 | 0.694 |
+| v1: OR-pooled channels into blocks 4, 8, 12 (128 ch) | 0.582 | 0.778 | - |
+| v1: OR-pooled channels every 2nd block (256 ch) | 0.584 | 0.775 | - |
+| v2: token-match input bit (`--match 1`) | 0.699 | 0.779 | **0.708** |
+| v2: match + majority-pooled channels every 4th block | **0.710** | 0.774 | 0.692 |
+
+- v1 carries no information: a channel fires at ~49% of positions, so "fired anywhere" is 1 for 97.7%
+  of texts x channels (measured on a trained model).
+- The token-match bit ("this token also occurs in the other [SEP] segment"; without [SEP], elsewhere
+  in the text) closes QNLI from -17 to -5 points; majority pooling adds 1 more (-4). No cost on SST-2;
+  emotion +1.4 with match alone. Inference cost is one bit per position and a popcount per pooled channel.

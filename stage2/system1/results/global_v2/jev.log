@@ -1,0 +1,53 @@
+JEVPOD [04:53:38] started (58fe232 jevft: rebuild the engine when its patch/engine sources change (sha256 stamp)); 16 vCPU, 14G disk free
+JEVPOD [04:54:46] python deps ok
+JEVPOD [04:54:46] pt.ltc sha256 ok
+JEVPOD [04:54:46] serving /root/jev_exports on :8888 (token set)
+JEVPOD [04:54:46] threads 16, Python 3.8.10, gcc (Ubuntu 9.4.0-1ubuntu1~20.04.2) 9.4.0
+JEV [04:54:46] start: tasks ['qnli', 'sst2', 'emotion'], arms ['lae_ovr_scratch', 'lae_ovr_scratch_m', 'lae_ovr_scratch_gm4'], LogicAE 2000 steps, threads 16
+JEV [04:54:51] build: {"check":"truth_tables,packed_scalar,odd_padding,partial_packs,checkpoint_roundtrip","passed":true}
+JEV [04:54:57] qnli: noul K=2 train 20000 dev 1000 test 2000 seq 96
+JEV [04:54:57] qnli lae_ovr_scratch: start
+JEV [05:08:45] qnli lae_ovr_scratch: model lae_ovr_scratch_bin done (13.8 min so far; val acc [(1500, 0.581)])
+JEV [05:08:45] RESULT {"task": "qnli", "type": "noul", "K": 2, "arm": "lae_ovr_scratch", "seq": 96, "test": {"n": 2000, "acc": 0.5795, "ece": 0.0136, "nll": 0.6743, "brier": 0.4815, "acc_at_50cov": 0.623, "temperature": 1229.089}, "dev_acc": 0.587, "info": {"train_minutes": 13.8, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.581]]], "latency_ms_1thread_fastlae": 2.0229, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [05:08:45] qnli lae_ovr_scratch_m: start
+JEV [05:23:11] qnli lae_ovr_scratch_m: model lae_ovr_scratch_m_bin done (14.4 min so far; val acc [(1500, 0.691)])
+JEV [05:23:11] RESULT {"task": "qnli", "type": "noul", "K": 2, "arm": "lae_ovr_scratch_m", "seq": 96, "test": {"n": 2000, "acc": 0.699, "ece": 0.0341, "nll": 0.5844, "brier": 0.3971, "acc_at_50cov": 0.808, "temperature": 310.2178}, "dev_acc": 0.695, "info": {"train_minutes": 14.4, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.691]]], "latency_ms_1thread_fastlae": 2.0879, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [05:23:11] qnli lae_ovr_scratch_gm4: start
+JEV [05:38:50] qnli lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_bin done (15.6 min so far; val acc [(1500, 0.697)])
+JEV [05:38:50] RESULT {"task": "qnli", "type": "noul", "K": 2, "arm": "lae_ovr_scratch_gm4", "seq": 96, "test": {"n": 2000, "acc": 0.7095, "ece": 0.0358, "nll": 0.5754, "brier": 0.3887, "acc_at_50cov": 0.812, "temperature": 513.3537}, "dev_acc": 0.712, "info": {"train_minutes": 15.6, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.697]]], "latency_ms_1thread_fastlae": 2.0579, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [05:38:55] sst2: choice K=2 train 20000 dev 1000 test 872 seq 48
+JEV [05:38:55] sst2 lae_ovr_scratch: start
+JEV [05:47:35] sst2 lae_ovr_scratch: model lae_ovr_scratch_bin done (8.7 min so far; val acc [(1500, 0.839)])
+JEV [05:47:36] RESULT {"task": "sst2", "type": "choice", "K": 2, "arm": "lae_ovr_scratch", "seq": 48, "test": {"n": 872, "acc": 0.7798, "ece": 0.0969, "nll": 0.5775, "brier": 0.3402, "acc_at_50cov": 0.8693, "temperature": 99.0452}, "dev_acc": 0.847, "info": {"train_minutes": 8.7, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.839]]], "latency_ms_1thread_fastlae": 1.1071, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [05:47:36] sst2 lae_ovr_scratch_m: start
+JEV [05:56:08] sst2 lae_ovr_scratch_m: model lae_ovr_scratch_m_bin done (8.5 min so far; val acc [(1500, 0.838)])
+JEV [05:56:08] RESULT {"task": "sst2", "type": "choice", "K": 2, "arm": "lae_ovr_scratch_m", "seq": 48, "test": {"n": 872, "acc": 0.7787, "ece": 0.0896, "nll": 0.574, "brier": 0.3387, "acc_at_50cov": 0.8807, "temperature": 95.7745}, "dev_acc": 0.843, "info": {"train_minutes": 8.5, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.838]]], "latency_ms_1thread_fastlae": 1.0766, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [05:56:08] sst2 lae_ovr_scratch_gm4: start
+JEV [06:04:57] sst2 lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_bin done (8.8 min so far; val acc [(1500, 0.835)])
+JEV [06:04:57] RESULT {"task": "sst2", "type": "choice", "K": 2, "arm": "lae_ovr_scratch_gm4", "seq": 48, "test": {"n": 872, "acc": 0.7741, "ece": 0.0906, "nll": 0.5712, "brier": 0.3402, "acc_at_50cov": 0.867, "temperature": 99.0452}, "dev_acc": 0.84, "info": {"train_minutes": 8.8, "models": 1, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.835]]], "latency_ms_1thread_fastlae": 1.0518, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [06:05:01] emotion: choice K=6 train 15000 dev 1000 test 2000 seq 48
+JEV [06:05:01] emotion lae_ovr_scratch: start
+JEV [06:13:21] emotion lae_ovr_scratch: model lae_ovr_scratch_0 done (8.3 min so far; val acc [(1500, 0.856)])
+JEV [06:21:48] emotion lae_ovr_scratch: model lae_ovr_scratch_1 done (16.8 min so far; val acc [(1500, 0.834)])
+JEV [06:30:19] emotion lae_ovr_scratch: model lae_ovr_scratch_2 done (25.3 min so far; val acc [(1500, 0.86)])
+JEV [06:38:57] emotion lae_ovr_scratch: model lae_ovr_scratch_3 done (33.9 min so far; val acc [(1500, 0.878)])
+JEV [06:47:57] emotion lae_ovr_scratch: model lae_ovr_scratch_4 done (42.9 min so far; val acc [(1500, 0.85)])
+JEV [06:57:07] emotion lae_ovr_scratch: model lae_ovr_scratch_5 done (52.1 min so far; val acc [(1500, 0.938)])
+JEV [06:57:08] RESULT {"task": "emotion", "type": "choice", "K": 6, "arm": "lae_ovr_scratch", "seq": 48, "test": {"n": 2000, "acc": 0.6935, "ece": 0.0498, "nll": 0.9169, "brier": 0.4438, "acc_at_50cov": 0.828, "temperature": 187.4635}, "dev_acc": 0.702, "info": {"train_minutes": 52.1, "models": 6, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.856]], [[1500, 0.834]], [[1500, 0.86]], [[1500, 0.878]], [[1500, 0.85]], [[1500, 0.938]]], "latency_ms_1thread_fastlae": 6.591, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [06:57:08] emotion lae_ovr_scratch_m: start
+JEV [07:06:28] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_0 done (9.3 min so far; val acc [(1500, 0.86)])
+JEV [07:15:34] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_1 done (18.4 min so far; val acc [(1500, 0.841)])
+JEV [07:24:44] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_2 done (27.6 min so far; val acc [(1500, 0.856)])
+JEV [07:33:20] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_3 done (36.2 min so far; val acc [(1500, 0.874)])
+JEV [07:41:37] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_4 done (44.5 min so far; val acc [(1500, 0.869)])
+JEV [07:50:17] emotion lae_ovr_scratch_m: model lae_ovr_scratch_m_5 done (53.2 min so far; val acc [(1500, 0.935)])
+JEV [07:50:17] RESULT {"task": "emotion", "type": "choice", "K": 6, "arm": "lae_ovr_scratch_m", "seq": 48, "test": {"n": 2000, "acc": 0.7075, "ece": 0.0545, "nll": 0.8905, "brier": 0.4294, "acc_at_50cov": 0.836, "temperature": 187.4635}, "dev_acc": 0.716, "info": {"train_minutes": 53.2, "models": 6, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.86]], [[1500, 0.841]], [[1500, 0.856]], [[1500, 0.874]], [[1500, 0.869]], [[1500, 0.935]]], "latency_ms_1thread_fastlae": 6.8538, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [07:50:17] emotion lae_ovr_scratch_gm4: start
+JEV [07:59:36] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_0 done (9.3 min so far; val acc [(1500, 0.838)])
+JEV [08:09:07] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_1 done (18.8 min so far; val acc [(1500, 0.842)])
+JEV [08:17:14] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_2 done (27.0 min so far; val acc [(1500, 0.842)])
+JEV [08:24:55] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_3 done (34.6 min so far; val acc [(1500, 0.886)])
+JEV [08:32:29] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_4 done (42.2 min so far; val acc [(1500, 0.86)])
+JEV [08:39:49] emotion lae_ovr_scratch_gm4: model lae_ovr_scratch_gm4_5 done (49.5 min so far; val acc [(1500, 0.927)])
+JEV [08:39:50] RESULT {"task": "emotion", "type": "choice", "K": 6, "arm": "lae_ovr_scratch_gm4", "seq": 48, "test": {"n": 2000, "acc": 0.6915, "ece": 0.0628, "nll": 0.9223, "brier": 0.4473, "acc_at_50cov": 0.823, "temperature": 193.8653}, "dev_acc": 0.703, "info": {"train_minutes": 49.5, "models": 6, "steps_per_model": 1500, "val_acc_last": [[[1500, 0.838]], [[1500, 0.842]], [[1500, 0.842]], [[1500, 0.886]], [[1500, 0.86]], [[1500, 0.927]]], "latency_ms_1thread_fastlae": 6.2648, "latency_note": "fastlae interpreter, 1 text, all K models; fastgen (compiled) is ~12x faster"}}
+JEV [08:39:50] done
