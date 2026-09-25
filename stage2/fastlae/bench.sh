@@ -20,7 +20,7 @@ T=${THREADS:-$(nproc)}; [ "$T" -gt 16 ] && T=16
 cd $OUT && rm -rf lb && mkdir lb && tar xzf $R/logic-bert.tar.gz -C lb; LB=$OUT/lb/logic-bert/src
 F="-O3 -march=native -std=gnu11 -fopenmp -Wno-unknown-pragmas"
 gcc $F $LB/logic_text.c -lm -o lt_ref && python3 $H/fasttrain_patch.py $LB/logic_text.c lt_fast.c > /dev/null && gcc $F lt_fast.c -lm -o lt_fast \
-  && gcc $F -I$LB $H/fastlae.c -lm -o fastlae || { log "build FAILED"; exit 1; }
+  && gcc $F -I$LB $H/fastlae.c -lm -o fastlae 2> build.err || { log "build FAILED: $(head -c 400 build.err | tr '\n' ' ')"; exit 1; }
 M=$R/models/logicae/sst2_scratch.lth   # run 1's SST-2 model (seq 64)
 # synthetic inputs: token ids / lengths only matter for timing; labels for training
 python3 - <<'PY'
@@ -32,8 +32,9 @@ for name, n, lo, hi, lab in (("bench64.ids", 1024, 8, 64, False), ("train64.ids"
             L = random.randint(lo, hi)
             f.write(f"{random.randint(0,1) if lab else -1} " + " ".join(str(random.randint(3, 30521)) for _ in range(L)) + "\n")
 PY
-./fastlae gen $M bench64.ids 64 sst2.inc > /dev/null && gcc -O2 -march=native -std=gnu11 -fopenmp -Wno-unknown-pragmas -I$LB -DGEN_INC='"sst2.inc"' $H/fastgen.c -lm -o fastgen \
-  || { log "fastgen build FAILED"; exit 1; }
+# (absolute GEN_INC: a quoted #include searches the including file's directory, not the cwd)
+./fastlae gen $M bench64.ids 64 $OUT/sst2.inc > /dev/null && gcc -O2 -march=native -std=gnu11 -fopenmp -Wno-unknown-pragmas -I$LB -DGEN_INC="\"$OUT/sst2.inc\"" $H/fastgen.c -lm -o fastgen 2> gen.err \
+  || { log "fastgen build FAILED: $(head -c 400 gen.err | tr '\n' ' ')"; exit 1; }
 log "builds ok, threads $T"
 # --- inference: correctness, then speed
 for b in fastlae fastgen; do
