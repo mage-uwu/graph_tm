@@ -22,7 +22,7 @@ PV=$(python3 -c 'import sys; print(sys.version_info[1])')
 if [ "$PV" -le 8 ]; then TORCH="torch==2.4.1"; TF="transformers==4.46.3"; else TORCH="torch"; TF="transformers"; fi
 python3 -m pip install -q $BSP --only-binary=:all: --index-url https://download.pytorch.org/whl/cpu "$TORCH" > /root/pip.err 2>&1 \
   || log "pip FAILED for $TORCH: $(tail -2 /root/pip.err | tr '\n' ' ')"
-for pkg in "numpy<1.25" "pyarrow<18" "tokenizers<0.21" "huggingface_hub<0.26" "$TF"; do
+for pkg in "numpy<1.25" "pyarrow<18" "tokenizers<0.21" "huggingface_hub<0.26" "$TF" "scipy<1.11" "scikit-learn<1.4"; do
   python3 -m pip install -q $BSP --only-binary=:all: "$pkg" > /root/pip.err 2>&1 || log "pip FAILED for $pkg: $(tail -2 /root/pip.err | tr '\n' ' ')"
 done
 rm -rf /root/.cache/pip
@@ -41,6 +41,7 @@ if [ -n "${JEV_TOKEN:-}" ]; then
   log "serving /root/jev_exports on :8888 (token set)"
 fi
 log "threads $THREADS, $(python3 --version 2>&1), $(gcc --version | head -1)"
-(cd $R/stage2/system1 && GTM_STAGE2_DATA=$OUT/data JEV_OUT=$OUT python3 jevft.py > $OUT/jevft.out 2>&1) \
-  || log "jevft.py exited non-zero: $(grep -v Warning $OUT/jevft.out | tail -3 | tr '\n' ' ')"
+S=${JEV_SCRIPT:-jevft.py}  # laya_td.py: Laya's typed-decisions benchmark
+(cd $R/stage2/system1 && GTM_STAGE2_DATA=$OUT/data JEV_OUT=$OUT python3 $S > $OUT/jevft.out 2>&1) \
+  || log "$S exited non-zero: $(grep -v Warning $OUT/jevft.out | tail -3 | tr '\n' ' ')"
 log "all done"
