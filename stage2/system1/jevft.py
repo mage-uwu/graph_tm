@@ -217,7 +217,10 @@ def lae_ovr_arm(task, arm, D, seq, tdir):
              "lae_ovr_scratch": SH.LAE_ARCH,
              # global view (global_patch.py): blocks 4, 8, 12 (g4) / every 2nd block (g2) also see OR-pooled channels
              "lae_ovr_scratch_g4": SH.LAE_ARCH + ["--global-every", "4", "--global-channels", "128"],
-             "lae_ovr_scratch_g2": SH.LAE_ARCH + ["--global-every", "2", "--global-channels", "256"]}[arm]
+             "lae_ovr_scratch_g2": SH.LAE_ARCH + ["--global-every", "2", "--global-channels", "256"],
+             # global view v2: token-match input bit (m) / + majority-pooled channels every 4th block (gm4)
+             "lae_ovr_scratch_m": SH.LAE_ARCH + ["--match", "1"],
+             "lae_ovr_scratch_gm4": SH.LAE_ARCH + ["--match", "1", "--global-every", "4", "--global-channels", "128", "--global-mean", "1"]}[arm]
     ytr, ydv = np.asarray(D["train"]["y"]), np.asarray(D["dev"]["y"])
     trs = [state(D["train"], i, seq) for i in range(len(ytr))]
     zd, zt, lats, curves, t0 = [], [], [], [], time.time()
