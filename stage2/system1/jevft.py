@@ -137,8 +137,16 @@ def build():
     if not os.path.exists(os.path.join(src, "logic-bert", "src", "logic_text.c")):
         with tarfile.open(LB_TGZ) as t:
             t.extractall(src)
-    if os.path.exists(LT) and os.path.exists(FL):
+    import hashlib
+    stamp = hashlib.sha256(b"".join(open(os.path.join(REPO, "stage2", *f), "rb").read() for f in (
+        ("logicae", "transfer_patch.py"), ("fastlae", "global_patch.py"), ("fastlae", "fasttrain_patch.py"),
+        ("fastlae", "fastlae.c")))).hexdigest()
+    sf = os.path.join(OUT, "engine.sha256")
+    if os.path.exists(LT) and os.path.exists(FL) and os.path.exists(sf) and open(sf).read() == stamp:
         return
+    for f in (LT, FL):  # engine sources changed (or first run): rebuild
+        if os.path.exists(f):
+            os.remove(f)
     patched = os.path.join(OUT, "logic_text.c")
     subprocess.run([sys.executable, os.path.join(REPO, "stage2", "logicae", "transfer_patch.py"),
                     os.path.join(src, "logic-bert", "src", "logic_text.c"), patched], check=True)
@@ -150,6 +158,7 @@ def build():
                    check=True)
     subprocess.run(["gcc", "-O3", "-march=native", "-std=gnu11", "-fopenmp", "-Wno-unknown-pragmas", "-I" + OUT,
                     os.path.join(REPO, "stage2", "fastlae", "fastlae.c"), "-lm", "-o", FL], check=True)
+    open(sf, "w").write(stamp)
     r = subprocess.run([LT, "selftest"], capture_output=True, text=True)
     say(f"build: {(r.stdout.strip().splitlines() or [r.stderr[-200:]])[-1]}")
 
