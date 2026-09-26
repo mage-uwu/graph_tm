@@ -1,0 +1,7 @@
+Tiny BitNet b1.58 weights from stage_B/bitnet/bitnet.c (float latent weights; ternary form = sign-round of W / mean|W|).
+Format: "BITNET01" (8 bytes), the Cfg struct, then every tensor's float32 weights in creation order
+(tok, pos, per sublayer: norm gain, BitLinear a, BitLinear b; final norm gain, head).
+
+text_full_2k.bin  --task text --data <WikiText-103 validation raw text, 1.1 MB> --arch full --steps 2000 (defaults
+                  otherwise: d 128, 2 layers, 4 heads, hidden 512, seq 64, batch 32, seed 1). val 1.888 nats/byte.
+copy_full.bin     --task copy --arch full --steps 200. val acc 1.000, val loss 0.0005.
