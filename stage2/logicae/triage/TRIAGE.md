@@ -100,3 +100,25 @@ Verdict:
   about transfer. Next: re-test QNLI with the pair options on, and a longer hard64 pretraining run (5-10x).
 - Models: `models/logicae/pt_hard64.ltc`, `pt_hardrev64.ltc` (MANIFEST.txt). fastlogic.c defaults pretraining to
   the hard forward pass.
+
+## Long run (`stage2/fast_logicae/longrun.py`, 2026-09-26): pretraining improved, transfer did not
+
+fastlogic.c, hard forward, pair options (--match 1, majority pooling every 4th block, 128 channels), 30k steps
+x 64 x 64 = 123M tokens of WikiText-103 streamed in article order (12 chunks of 160k windows), 16 vCPU, 4.0 h.
+Final: validation masked-word CE 5.51; on the fixed 2,000-target probe acc@1 0.204 / acc@10 0.416 (bert-tiny on
+the same targets: CE 3.96, 0.314 / 0.596); dead channels 42% (flat after step 10k). Raw: `stage2/fast_logicae/longrun_results/`.
+
+Adaptation (straight-through, 1000 steps, batch 32, seed 17, final-step hardened test accuracy):
+
+| start | SST-2 | QNLI |
+|---|---|---|
+| scratch, with pair options (pod) | 0.779 | **0.732** |
+| long run final, 30k steps (pod) | 0.743 | 0.688 |
+| long run 25%, 7.5k steps (local) | 0.751 (dev1k .641 .739 .782 .802) | - |
+| vetting hard64, 3k steps, no pair options (local re-run; reproduces exactly) | **0.805** (dev1k .750 .810 .855 .862) | - |
+
+The long run's checkpoints adapt worse than scratch on both tasks, already at 25%, while the short vetting model
+transfers (+2.6 over this scratch). Candidates (untested): (1) the pair options in pretraining; (2) article-order
+streamed chunks (non-iid: each chunk holds ~160k windows from consecutive articles; vetting sampled windows
+uniformly over the corpus); (3) the longer schedule. Next: 3k-step hard pretraining with pairs on iid windows vs
+without pairs on stream-order chunks, then the same SST-2 fine-tune.

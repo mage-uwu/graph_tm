@@ -1,0 +1,16 @@
+{"phase": "pretrain", "step": 2500, "of": 30000, "tokens_M": 10.2, "val_mlm_ce": 6.092249, "hours": 0.34, "acc1": 0.1705, "acc10": 0.37, "ce_probe": 6.3274, "dead_share": 0.344}
+{"phase": "pretrain", "step": 5000, "of": 30000, "tokens_M": 20.5, "val_mlm_ce": 5.853822, "hours": 0.67, "acc1": 0.1815, "acc10": 0.4015, "ce_probe": 6.0159, "dead_share": 0.385}
+{"phase": "pretrain", "step": 7500, "of": 30000, "tokens_M": 30.7, "val_mlm_ce": 5.755326, "hours": 1.0, "acc1": 0.188, "acc10": 0.4005, "ce_probe": 5.9029, "dead_share": 0.399}
+{"phase": "pretrain", "step": 10000, "of": 30000, "tokens_M": 41.0, "val_mlm_ce": 5.66686, "hours": 1.34, "acc1": 0.1985, "acc10": 0.4045, "ce_probe": 5.8413, "dead_share": 0.411}
+{"phase": "pretrain", "step": 12500, "of": 30000, "tokens_M": 51.2, "val_mlm_ce": 5.634427, "hours": 1.68, "acc1": 0.194, "acc10": 0.4055, "ce_probe": 5.7903, "dead_share": 0.412}
+{"phase": "pretrain", "step": 15000, "of": 30000, "tokens_M": 61.4, "val_mlm_ce": 5.5685, "hours": 2.02, "acc1": 0.193, "acc10": 0.4185, "ce_probe": 5.7129, "dead_share": 0.415}
+{"phase": "pretrain", "step": 17500, "of": 30000, "tokens_M": 71.7, "val_mlm_ce": 5.628876, "hours": 2.36, "acc1": 0.19, "acc10": 0.4115, "ce_probe": 5.7883, "dead_share": 0.416}
+{"phase": "pretrain", "step": 20000, "of": 30000, "tokens_M": 81.9, "val_mlm_ce": 5.554583, "hours": 2.69, "acc1": 0.2015, "acc10": 0.4175, "ce_probe": 5.7003, "dead_share": 0.42}
+{"phase": "pretrain", "step": 22500, "of": 30000, "tokens_M": 92.2, "val_mlm_ce": 5.525576, "hours": 3.03, "acc1": 0.1995, "acc10": 0.4255, "ce_probe": 5.6728, "dead_share": 0.417}
+{"phase": "pretrain", "step": 25000, "of": 30000, "tokens_M": 102.4, "val_mlm_ce": 5.517262, "hours": 3.36, "acc1": 0.206, "acc10": 0.42, "ce_probe": 5.6615, "dead_share": 0.417}
+{"phase": "pretrain", "step": 27500, "of": 30000, "tokens_M": 112.6, "val_mlm_ce": 5.531542, "hours": 3.7, "acc1": 0.201, "acc10": 0.419, "ce_probe": 5.6654, "dead_share": 0.418}
+{"phase": "pretrain", "step": 30000, "of": 30000, "tokens_M": 122.9, "val_mlm_ce": 5.510781, "hours": 4.03, "acc1": 0.2035, "acc10": 0.4155, "ce_probe": 5.655, "dead_share": 0.419}
+{"phase": "adapt", "task": "sst2", "init": "scratch", "steps": 1000, "dev": 0.847, "test": 0.77866972, "dev1k_curve": [0.711, 0.804, 0.832, 0.84], "minutes": 5.8}
+{"phase": "adapt", "task": "sst2", "init": "pretrained", "steps": 1000, "dev": 0.7695, "test": 0.74311927, "dev1k_curve": [0.656, 0.721, 0.739, 0.761], "minutes": 5.8}
+{"phase": "adapt", "task": "qnli", "init": "pretrained", "steps": 1000, "dev": 0.7065, "test": 0.68808347, "dev1k_curve": [0.631, 0.683, 0.698, 0.698], "minutes": 8.5}
+{"phase": "adapt", "task": "qnli", "init": "scratch", "steps": 1000, "dev": 0.731, "test": 0.73238148, "dev1k_curve": [0.677, 0.705, 0.715, 0.714], "minutes": 8.6}

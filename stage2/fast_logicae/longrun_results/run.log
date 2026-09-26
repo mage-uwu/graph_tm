@@ -1,0 +1,85 @@
+LRPOD [01:03:59] started (f395592 longrun.py/.sh: the long LogicAE pretraining run (fastlogic.c, hard forward + pair options, 30k steps / 123M tokens, streamed chunks, rotating saved.pt, perf log every 5 min, saved_q1.pt at 25%, saved_fastae.pt + SST-2/QNLI adaptation checks)); 16 vCPU, 39G disk free
+LRPOD [01:04:06] serving /root/lr_exports on :8888 (token set)
+LRPOD [01:04:06] threads 16, Python 3.12.3, gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+LR [01:04:06] long run: 30000 steps x 64 x 64 tokens = 123M tokens, hard forward, pair options --match 1 --global-every 4 --global-channels 128 --global-mean 1, 16 threads, chunks of 2500 steps
+LR [01:04:12] built fastlogic (bit-level hard forward, fast output layer) and diag
+LR [01:04:25] eval data: 2,000 validation windows, 2,000 masked-word targets, sst2 / qnli splits
+LR [01:04:31] data: chunk 0 written (160000 windows, pass 1)
+LR [01:04:37] data: chunk 1 written (160000 windows, pass 1)
+LR [01:09:25] perf: step 500/30000 (1.7%), 0.60 s/step avg, 6827 tokens/s, ETA 4.9 h, train CE 6.787, val CE 6.947, code temperature 0.983
+LR [01:14:25] perf: step 1000/30000 (3.3%), 0.60 s/step avg, last window 0.60 s/step, 6827 tokens/s, ETA 4.8 h, train CE 6.717, val CE 6.546, code temperature 0.967
+LR [01:19:25] perf: step 1750/30000 (5.8%), 0.51 s/step avg, last window 0.40 s/step, 7964 tokens/s, ETA 4.0 h, train CE 6.594, val CE 6.231, code temperature 0.942
+LR [01:24:25] perf: step 2250/30000 (7.5%), 0.53 s/step avg, last window 0.60 s/step, 7680 tokens/s, ETA 4.1 h, train CE 6.138, val CE 6.144, code temperature 0.925
+LR [01:24:44] data: chunk 2 written (160000 windows, pass 1)
+LR [01:24:45] RESULT {"phase": "pretrain", "step": 2500, "of": 30000, "tokens_M": 10.2, "val_mlm_ce": 6.092249, "hours": 0.34, "acc1": 0.1705, "acc10": 0.37, "ce_probe": 6.3274, "dead_share": 0.344}
+LR [01:29:25] perf: step 3000/30000 (10.0%), 0.50 s/step avg, last window 0.40 s/step, 8192 tokens/s, ETA 3.8 h, train CE 5.845, val CE 6.025, code temperature 0.900
+LR [01:34:25] perf: step 3500/30000 (11.7%), 0.51 s/step avg, last window 0.60 s/step, 7964 tokens/s, ETA 3.8 h, train CE 5.717, val CE 5.996, code temperature 0.883
+LR [01:39:25] perf: step 4250/30000 (14.2%), 0.49 s/step avg, last window 0.40 s/step, 8289 tokens/s, ETA 3.5 h, train CE 5.558, val CE 5.900, code temperature 0.858
+LR [01:44:25] perf: step 4750/30000 (15.8%), 0.51 s/step avg, last window 0.60 s/step, 8107 tokens/s, ETA 3.5 h, train CE 5.869, val CE 5.895, code temperature 0.842
+LR [01:44:39] data: chunk 3 written (160000 windows, pass 1)
+LR [01:44:41] RESULT {"phase": "pretrain", "step": 5000, "of": 30000, "tokens_M": 20.5, "val_mlm_ce": 5.853822, "hours": 0.67, "acc1": 0.1815, "acc10": 0.4015, "ce_probe": 6.0159, "dead_share": 0.385}
+LR [01:49:25] perf: step 5500/30000 (18.3%), 0.49 s/step avg, last window 0.40 s/step, 8344 tokens/s, ETA 3.3 h, train CE 5.825, val CE 5.823, code temperature 0.817
+LR [01:54:25] perf: step 6000/30000 (20.0%), 0.50 s/step avg, last window 0.60 s/step, 8192 tokens/s, ETA 3.3 h, train CE 5.766, val CE 5.836, code temperature 0.800
+LR [01:59:25] perf: step 6750/30000 (22.5%), 0.49 s/step avg, last window 0.40 s/step, 8378 tokens/s, ETA 3.2 h, train CE 5.875, val CE 5.753, code temperature 0.775
+LR [02:04:25] perf: step 7250/30000 (24.2%), 0.50 s/step avg, last window 0.60 s/step, 8249 tokens/s, ETA 3.1 h, train CE 5.839, val CE 5.744, code temperature 0.758
+LR [02:04:45] RESULT {"phase": "pretrain", "step": 7500, "of": 30000, "tokens_M": 30.7, "val_mlm_ce": 5.755326, "hours": 1.0, "acc1": 0.188, "acc10": 0.4005, "ce_probe": 5.9029, "dead_share": 0.399}
+LR [02:04:45] saved_q1.pt (25%) is downloadable
+LR [02:04:46] data: chunk 4 written (160000 windows, pass 1)
+LR [02:09:25] perf: step 8000/30000 (26.7%), 0.49 s/step avg, last window 0.40 s/step, 8402 tokens/s, ETA 3.0 h, train CE 5.680, val CE 5.718, code temperature 0.733
+LR [02:14:25] perf: step 8500/30000 (28.3%), 0.49 s/step avg, last window 0.60 s/step, 8289 tokens/s, ETA 3.0 h, train CE 5.548, val CE 5.689, code temperature 0.717
+LR [02:19:25] perf: step 9250/30000 (30.8%), 0.49 s/step avg, last window 0.40 s/step, 8419 tokens/s, ETA 2.8 h, train CE 5.429, val CE 5.697, code temperature 0.692
+LR [02:24:25] perf: step 9750/30000 (32.5%), 0.49 s/step avg, last window 0.60 s/step, 8320 tokens/s, ETA 2.8 h, train CE 5.743, val CE 5.714, code temperature 0.675
+LR [02:25:07] RESULT {"phase": "pretrain", "step": 10000, "of": 30000, "tokens_M": 41.0, "val_mlm_ce": 5.66686, "hours": 1.34, "acc1": 0.1985, "acc10": 0.4045, "ce_probe": 5.8413, "dead_share": 0.411}
+LR [02:25:13] data: chunk 5 written (160000 windows, pass 1)
+LR [02:29:25] perf: step 10500/30000 (35.0%), 0.49 s/step avg, last window 0.40 s/step, 8433 tokens/s, ETA 2.6 h, train CE 5.594, val CE 5.680, code temperature 0.650
+LR [02:34:25] perf: step 11000/30000 (36.7%), 0.49 s/step avg, last window 0.60 s/step, 8344 tokens/s, ETA 2.6 h, train CE 5.404, val CE 5.656, code temperature 0.633
+LR [02:39:25] perf: step 11750/30000 (39.2%), 0.49 s/step avg, last window 0.40 s/step, 8443 tokens/s, ETA 2.5 h, train CE 5.626, val CE 5.622, code temperature 0.608
+LR [02:44:25] perf: step 12250/30000 (40.8%), 0.49 s/step avg, last window 0.60 s/step, 8363 tokens/s, ETA 2.4 h, train CE 5.573, val CE 5.650, code temperature 0.592
+LR [02:45:17] RESULT {"phase": "pretrain", "step": 12500, "of": 30000, "tokens_M": 51.2, "val_mlm_ce": 5.634427, "hours": 1.68, "acc1": 0.194, "acc10": 0.4055, "ce_probe": 5.7903, "dead_share": 0.412}
+LR [02:45:21] data: chunk 6 written (160000 windows, pass 1)
+LR [02:49:25] perf: step 12750/30000 (42.5%), 0.49 s/step avg, last window 0.60 s/step, 8289 tokens/s, ETA 2.4 h, train CE 5.530, val CE 5.611, code temperature 0.575
+LR [02:54:25] perf: step 13500/30000 (45.0%), 0.49 s/step avg, last window 0.40 s/step, 8378 tokens/s, ETA 2.2 h, train CE 5.802, val CE 5.617, code temperature 0.550
+LR [02:59:25] perf: step 14000/30000 (46.7%), 0.49 s/step avg, last window 0.60 s/step, 8311 tokens/s, ETA 2.2 h, train CE 5.214, val CE 5.591, code temperature 0.533
+LR [03:04:25] perf: step 14750/30000 (49.2%), 0.49 s/step avg, last window 0.40 s/step, 8391 tokens/s, ETA 2.1 h, train CE 5.603, val CE 5.616, code temperature 0.508
+LR [03:05:42] RESULT {"phase": "pretrain", "step": 15000, "of": 30000, "tokens_M": 61.4, "val_mlm_ce": 5.5685, "hours": 2.02, "acc1": 0.193, "acc10": 0.4185, "ce_probe": 5.7129, "dead_share": 0.415}
+LR [03:05:46] data: chunk 7 written (160000 windows, pass 1)
+LR [03:09:25] perf: step 15250/30000 (50.8%), 0.49 s/step avg, last window 0.60 s/step, 8328 tokens/s, ETA 2.0 h, train CE 5.443, val CE 5.618, code temperature 0.492
+LR [03:14:25] perf: step 16000/30000 (53.3%), 0.49 s/step avg, last window 0.40 s/step, 8402 tokens/s, ETA 1.9 h, train CE 5.522, val CE 5.582, code temperature 0.467
+LR [03:19:25] perf: step 16500/30000 (55.0%), 0.49 s/step avg, last window 0.60 s/step, 8344 tokens/s, ETA 1.8 h, train CE 5.888, val CE 5.576, code temperature 0.450
+LR [03:24:25] perf: step 17250/30000 (57.5%), 0.49 s/step avg, last window 0.40 s/step, 8411 tokens/s, ETA 1.7 h, train CE 5.420, val CE 5.566, code temperature 0.425
+LR [03:25:49] RESULT {"phase": "pretrain", "step": 17500, "of": 30000, "tokens_M": 71.7, "val_mlm_ce": 5.628876, "hours": 2.36, "acc1": 0.19, "acc10": 0.4115, "ce_probe": 5.7883, "dead_share": 0.416}
+LR [03:25:53] data: chunk 8 written (160000 windows, pass 1)
+LR [03:29:25] perf: step 17750/30000 (59.2%), 0.49 s/step avg, last window 0.60 s/step, 8357 tokens/s, ETA 1.7 h, train CE 5.459, val CE 5.552, code temperature 0.408
+LR [03:34:25] perf: step 18500/30000 (61.7%), 0.49 s/step avg, last window 0.40 s/step, 8419 tokens/s, ETA 1.6 h, train CE 5.562, val CE 5.534, code temperature 0.383
+LR [03:39:25] perf: step 19000/30000 (63.3%), 0.49 s/step avg, last window 0.60 s/step, 8368 tokens/s, ETA 1.5 h, train CE 5.609, val CE 5.536, code temperature 0.367
+LR [03:44:25] perf: step 19750/30000 (65.8%), 0.49 s/step avg, last window 0.40 s/step, 8427 tokens/s, ETA 1.4 h, train CE 5.385, val CE 5.539, code temperature 0.342
+LR [03:45:58] RESULT {"phase": "pretrain", "step": 20000, "of": 30000, "tokens_M": 81.9, "val_mlm_ce": 5.554583, "hours": 2.69, "acc1": 0.2015, "acc10": 0.4175, "ce_probe": 5.7003, "dead_share": 0.42}
+LR [03:46:00] data: chunk 9 written (160000 windows, pass 1)
+LR [03:49:25] perf: step 20250/30000 (67.5%), 0.49 s/step avg, last window 0.60 s/step, 8378 tokens/s, ETA 1.3 h, train CE 5.422, val CE 5.550, code temperature 0.325
+LR [03:54:25] perf: step 21000/30000 (70.0%), 0.49 s/step avg, last window 0.40 s/step, 8433 tokens/s, ETA 1.2 h, train CE 5.804, val CE 5.553, code temperature 0.300
+LR [03:59:25] perf: step 21500/30000 (71.7%), 0.49 s/step avg, last window 0.60 s/step, 8387 tokens/s, ETA 1.2 h, train CE 5.882, val CE 5.508, code temperature 0.283
+LR [04:04:25] perf: step 22250/30000 (74.2%), 0.49 s/step avg, last window 0.40 s/step, 8438 tokens/s, ETA 1.0 h, train CE 5.494, val CE 5.530, code temperature 0.258
+LR [04:06:10] RESULT {"phase": "pretrain", "step": 22500, "of": 30000, "tokens_M": 92.2, "val_mlm_ce": 5.525576, "hours": 3.03, "acc1": 0.1995, "acc10": 0.4255, "ce_probe": 5.6728, "dead_share": 0.417}
+LR [04:06:16] data: chunk 10 written (160000 windows, pass 1)
+LR [04:09:25] perf: step 22750/30000 (75.8%), 0.49 s/step avg, last window 0.60 s/step, 8395 tokens/s, ETA 1.0 h, train CE 5.358, val CE 5.542, code temperature 0.242
+LR [04:14:25] perf: step 23500/30000 (78.3%), 0.49 s/step avg, last window 0.40 s/step, 8443 tokens/s, ETA 0.9 h, train CE 5.647, val CE 5.542, code temperature 0.217
+LR [04:19:25] perf: step 24000/30000 (80.0%), 0.49 s/step avg, last window 0.60 s/step, 8402 tokens/s, ETA 0.8 h, train CE 5.267, val CE 5.546, code temperature 0.200
+LR [04:24:25] perf: step 24750/30000 (82.5%), 0.48 s/step avg, last window 0.40 s/step, 8448 tokens/s, ETA 0.7 h, train CE 5.576, val CE 5.516, code temperature 0.200
+LR [04:26:16] RESULT {"phase": "pretrain", "step": 25000, "of": 30000, "tokens_M": 102.4, "val_mlm_ce": 5.517262, "hours": 3.36, "acc1": 0.206, "acc10": 0.42, "ce_probe": 5.6615, "dead_share": 0.417}
+LR [04:26:23] data: chunk 11 written (160000 windows, pass 1)
+LR [04:29:25] perf: step 25250/30000 (84.2%), 0.49 s/step avg, last window 0.60 s/step, 8408 tokens/s, ETA 0.6 h, train CE 5.534, val CE 5.543, code temperature 0.200
+LR [04:34:25] perf: step 26000/30000 (86.7%), 0.48 s/step avg, last window 0.40 s/step, 8452 tokens/s, ETA 0.5 h, train CE 5.400, val CE 5.534, code temperature 0.200
+LR [04:39:25] perf: step 26500/30000 (88.3%), 0.49 s/step avg, last window 0.60 s/step, 8414 tokens/s, ETA 0.5 h, train CE 5.356, val CE 5.504, code temperature 0.200
+LR [04:44:25] perf: step 27250/30000 (90.8%), 0.48 s/step avg, last window 0.40 s/step, 8456 tokens/s, ETA 0.4 h, train CE 5.817, val CE 5.557, code temperature 0.200
+LR [04:46:18] RESULT {"phase": "pretrain", "step": 27500, "of": 30000, "tokens_M": 112.6, "val_mlm_ce": 5.531542, "hours": 3.7, "acc1": 0.201, "acc10": 0.419, "ce_probe": 5.6654, "dead_share": 0.418}
+LR [04:49:25] perf: step 27750/30000 (92.5%), 0.49 s/step avg, last window 0.60 s/step, 8419 tokens/s, ETA 0.3 h, train CE 5.963, val CE 5.541, code temperature 0.200
+LR [04:54:25] perf: step 28500/30000 (95.0%), 0.48 s/step avg, last window 0.40 s/step, 8459 tokens/s, ETA 0.2 h, train CE 5.576, val CE 5.509, code temperature 0.200
+LR [04:59:25] perf: step 29000/30000 (96.7%), 0.49 s/step avg, last window 0.60 s/step, 8424 tokens/s, ETA 0.1 h, train CE 5.507, val CE 5.495, code temperature 0.200
+LR [05:04:25] perf: step 29750/30000 (99.2%), 0.48 s/step avg, last window 0.40 s/step, 8462 tokens/s, ETA 0.0 h, train CE 5.216, val CE 5.485, code temperature 0.200
+LR [05:06:20] RESULT {"phase": "pretrain", "step": 30000, "of": 30000, "tokens_M": 122.9, "val_mlm_ce": 5.510781, "hours": 4.03, "acc1": 0.2035, "acc10": 0.4155, "ce_probe": 5.655, "dead_share": 0.419}
+LR [05:06:20] saved_fastae.pt (final) is downloadable; adaptation checks next
+LR [05:12:08] RESULT {"phase": "adapt", "task": "sst2", "init": "scratch", "steps": 1000, "dev": 0.847, "test": 0.77866972, "dev1k_curve": [0.711, 0.804, 0.832, 0.84], "minutes": 5.8}
+LR [05:12:10] RESULT {"phase": "adapt", "task": "sst2", "init": "pretrained", "steps": 1000, "dev": 0.7695, "test": 0.74311927, "dev1k_curve": [0.656, 0.721, 0.739, 0.761], "minutes": 5.8}
+LR [05:20:39] RESULT {"phase": "adapt", "task": "qnli", "init": "pretrained", "steps": 1000, "dev": 0.7065, "test": 0.68808347, "dev1k_curve": [0.631, 0.683, 0.698, 0.698], "minutes": 8.5}
+LR [05:20:45] RESULT {"phase": "adapt", "task": "qnli", "init": "scratch", "steps": 1000, "dev": 0.731, "test": 0.73238148, "dev1k_curve": [0.677, 0.705, 0.715, 0.714], "minutes": 8.6}
+LR [05:20:45] done
