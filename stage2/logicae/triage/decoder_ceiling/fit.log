@@ -1,0 +1,21 @@
+tied decoder CE: val 5.6330  train 5.6751   unigram(train counts) on val 7.2671
+  proj128 rank=full epoch 1: val CE 6.3014  (38s)
+  proj128 rank=full epoch 2: val CE 6.0241  (72s)
+  proj128 rank=full epoch 3: val CE 5.9045  (107s)
+  proj128 rank=full epoch 4: val CE 5.8350  (142s)
+  proj128 rank=full epoch 5: val CE 5.7974  (176s)
+  proj128 rank=full epoch 6: val CE 5.7761  (211s)
+  proj128 rank=full epoch 7: val CE 5.7667  (245s)
+  proj128 rank=full epoch 8: val CE 5.7710  (279s)
+  proj128 rank=full epoch 9: val CE 5.7723  (312s)
+RESULT proj128 rank=full best val CE 5.7667
+  trunk1024 rank=full epoch 1: val CE 6.4818  (101s)
+  trunk1024 rank=full epoch 2: val CE 6.3817  (203s)
+  trunk1024 rank=full epoch 3: val CE 6.3168  (303s)
+  trunk1024 rank=full epoch 4: val CE 6.3364  (403s)
+  trunk1024 rank=full epoch 5: val CE 6.3551  (506s)
+RESULT trunk1024 rank=full best val CE 6.3168
+  trunk5x1024 rank=1024 epoch 1: val CE 5.9349  (148s)
+  trunk5x1024 rank=1024 epoch 2: val CE 6.0582  (298s)
+  trunk5x1024 rank=1024 epoch 3: val CE 6.3655  (444s)
+RESULT trunk5x1024 rank=1024 best val CE 5.9349

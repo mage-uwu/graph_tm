@@ -125,10 +125,11 @@ bert-tiny on the same CPU: ~1.4 ms per text.
 
 ## Known limits (see stage2/logicae/triage/TRIAGE.md)
 
-- Masked-word pretraining does not yet give a reusable trunk.
-  - It leaves ~68% of channels dead and saturated.
-  - Even with hard-forward fine-tuning, the pretrained model trails scratch (0.669–0.688 vs 0.764 on SST-2).
-  - The pretraining fix (hard-forward pretraining, dead-channel revival) is being vetted in stage2/logicae/vet.py.
+- Pretraining transfers at 3,000 hard-forward steps (SST-2 0.805 vs scratch 0.772). Longer pretraining lowers
+  masked-word CE but transfers worse, as the dead-channel share grows (30% at 3k steps, 42% at 30k).
+- The output layer is the tied 128-bit Hamming decoder, kept on purpose: untied softmax heads fitted on the frozen
+  30k-step model do no better (5.77 / 6.32 / 5.93 vs tied 5.63 masked-word CE). The quality limit is the trunk.
+- Pretraining step time (4 cores): trunk backward 58%, output layer 30%, trunk forward 9%.
 - Binary head only (K-way = one model per option).
 - `fastgen` is built for one context length band (1-64, 65-128, ..., 449-512 tokens); `fastlae` handles any length up to 512.
 

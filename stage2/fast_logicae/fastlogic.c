@@ -40,6 +40,14 @@
  *              all 30,519 token codes (tied Hamming decoder + per-word bias), capped at 512 targets per batch
  *              (--mlm-targets). Data: `-1 id id ...` lines, e.g. 64-token WikiText windows. Stream your corpus
  *              into that file; do not load it into memory.
+ *              The tied decoder is kept on purpose: it is the best output layer we have measured. On the frozen
+ *              30k-step model (WikiText-103 validation, masked-word CE, nats) the tied 128-bit decoder scores 5.63;
+ *              untied softmax heads fitted on 200k targets score 5.77 on the same 128 projection bits, 6.32 on the
+ *              1024 final-block channels, 5.93 on 5 x 1024 channels around the target (unigram 7.27). The limit
+ *              is the trunk's features, not the decoder.
+ *              How long: 3,000 steps (~12M tokens) is the recipe that transfers. 30,000 steps lowers masked-word
+ *              CE (5.74 -> 5.51) but transfers worse (SST-2 0.743, QNLI 0.688 vs scratch 0.779 / 0.732) as the
+ *              dead-channel share grows (30% -> 42%). Pick checkpoints by adaptation, not by masked-word CE.
  *   adapt      `train --load pretrained.ltc`: keeps the checkpoint's code temperature (the gates were trained
  *              on near-binary codes), fresh Adam, hard forward. `--load-part codes|gates` loads half.
  *              `revive` resets dead channels of a checkpoint to the pass-through init before adapting.
@@ -52,6 +60,8 @@
  *              and the code gradient vectorise while every value keeps the same float operations in the same
  *              order. 4-core Xeon, 16x1024, seq 64: supervised batch 32 1.03 -> 0.69 s/step; pretraining
  *              batch 64 (512 targets) 4.19 -> 1.49 s/step. All byte-identical to the float reference.
+ *              Where a pretraining step goes now (4 cores): trunk backward 58%, output layer 30%, trunk forward 9%,
+ *              regularizer + Adam 3%.
  *              The binary sets OMP_WAIT_POLICY=passive itself: spinning OpenMP threads cost 5-10x on SMT machines.
  *              Results are byte-identical at any thread count; --resume is bit-exact.
  *
@@ -74,9 +84,10 @@
  * DATA: `--format ids` lines `LABEL id id ...` (LABEL 0/1, or -1 unlabeled). Reserved ids: 0 PAD, 1 MASK,
  * 2 UNK; [SEP] = 102. Longer records are cut to --seq, shorter ones PAD-filled.
  *
- * KNOWN LIMITS: pretraining transfer is established on one task so far. Hard-forward pretraining (3000 steps,
- * ~12M tokens) then adaptation: SST-2 0.805 vs scratch 0.772; soft pretraining 0.766. QNLI was flat for every
- * arm (0.588) without the pair options. Binary head. Inputs up to 512 tokens.
+ * KNOWN LIMITS: hard-forward pretraining (3000 steps, ~12M tokens) then adaptation: SST-2 0.805 vs scratch 0.772
+ * (soft pretraining 0.766); with the pair options on, 0.792 vs 0.779. Longer pretraining kills channels and
+ * transfers worse (see pretrain). Masked-word CE 5.51 at best (1.66 bits per byte) vs bert-tiny 3.96; the gap is
+ * in the trunk (fixed random wiring, no content routing), not the decoder. Binary head. Inputs up to 512 tokens.
  *
  * FILE MAP: training engine (codes, gate trees, objectives, Adam, checkpoints, hardening, CLI) | fast inference
  * (interpreter, lanes, compiler) | checks and tools (hardcheck, revive) | main | compiled-model hook.

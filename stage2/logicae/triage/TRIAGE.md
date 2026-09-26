@@ -144,3 +144,21 @@ trunk and removes plasticity; the 3k-step models are still plastic.
 Next: keep the trunk alive during long pretraining, which the vetting run already showed is possible (dead-channel
 revival every 500 steps held 2.3% dead): a long run with revival (and checkpoints scored by adaptation, not by
 masked-word loss), vs early stopping at ~3k steps as the current best reusable recipe.
+
+## Is the output layer still the bottleneck? No (saved_fastae.pt, 30k steps)
+
+- Speed (4 cores, pretraining batch 64, 512 targets): trunk backward 0.61 s (58%), output layer 0.32 s (30%),
+  trunk forward 0.09 s (9%), regularizer + Adam 0.03 s.
+- Quality: frozen features, untied softmax heads fitted on 200k WikiText-103 train targets, CE on 5,433
+  validation targets (`decoder_ceiling/`: mk.py streams the data, dump.c extracts hard-forward bits, fit.py fits):
+
+| decoder | val CE |
+|---|---|
+| tied 128-bit Hamming decoder (the model's own) | **5.63** |
+| untied linear softmax, same 128 projection bits | 5.77 |
+| linear softmax, 1024 final-block channels at the target | 6.32 |
+| rank-1024 softmax, 5 x 1024 channels around the target | 5.93 |
+| unigram | 7.27 |
+
+  No unconstrained head beats the tied decoder (caveat: 200k fitting targets vs ~120M training tokens). The
+  tied decoder stays; the gap to bert-tiny is in the trunk's features.
