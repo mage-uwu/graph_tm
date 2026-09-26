@@ -47,8 +47,11 @@
  *              gate a mux, the inference engine's method); the backward pass takes the tree's node bits from the
  *              same words and uses the exact binary-input gate gradients (one corner gets u, d/da and d/db are
  *              corner differences). Deterministic parallel backward (phase 1 over outputs, phase 2 over input
- *              channels in the serial order). 4-core Xeon, 16x1024, seq 64: supervised batch 32 1.03 -> 0.69
- *              s/step; pretraining batch 64 4.19 -> 3.41 s/step (the 30k-word output layer is now ~2/3 of it).
+ *              channels in the serial order). Masked-word output layer: tiles of 16 targets x 256 words with
+ *              the +-code matrix precomputed once per step, so the 30,519-way logits, the projection gradient
+ *              and the code gradient vectorise while every value keeps the same float operations in the same
+ *              order. 4-core Xeon, 16x1024, seq 64: supervised batch 32 1.03 -> 0.69 s/step; pretraining
+ *              batch 64 (512 targets) 4.19 -> 1.49 s/step. All byte-identical to the float reference.
  *              The binary sets OMP_WAIT_POLICY=passive itself: spinning OpenMP threads cost 5-10x on SMT machines.
  *              Results are byte-identical at any thread count; --resume is bit-exact.
  *

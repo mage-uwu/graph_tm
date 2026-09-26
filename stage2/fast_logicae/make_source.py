@@ -6,6 +6,7 @@ in order, plus the standalone defaults. The generated file is committed; run thi
   3 stage2/logicae/hard_patch.py       --hard-forward (straight-through: forward = the deployed hard network)
   4 stage2/fastlae/fasttrain_patch.py  parallel backward, byte-identical results at any thread count
   4b stage2/fastlae/bitfwd_patch.py    hard forward on packed bits + exact binary-input gradients (byte-identical)
+  4c stage2/fastlae/mlmfast_patch.py   masked-word output layer tiled + vectorised, same float ops (byte-identical)
   5 standalone (below)                 `train` trains against the hard network by default (--soft-forward to opt
                                        out), `pretrain` stays soft unless --hard-forward; threads default to all
                                        cores; OMP_WAIT_POLICY=passive unless set (spinning threads cost 5-10x)
@@ -49,7 +50,8 @@ def main():
         t.extractall(tmp)
     src = os.path.join(tmp, "logic-bert", "src", "logic_text.c")
     steps = [("logicae/transfer_patch.py", "1.c"), ("fastlae/global_patch.py", "2.c"),
-             ("logicae/hard_patch.py", "3.c"), ("fastlae/fasttrain_patch.py", "4.c"), ("fastlae/bitfwd_patch.py", "5.c")]
+             ("logicae/hard_patch.py", "3.c"), ("fastlae/fasttrain_patch.py", "4.c"), ("fastlae/bitfwd_patch.py", "5.c"),
+             ("fastlae/mlmfast_patch.py", "6.c")]
     cur = src
     for script, out in steps:
         nxt = os.path.join(tmp, out)
