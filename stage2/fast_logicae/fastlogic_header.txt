@@ -43,9 +43,13 @@
  *   adapt      `train --load pretrained.ltc`: keeps the checkpoint's code temperature (the gates were trained
  *              on near-binary codes), fresh Adam, hard forward. `--load-part codes|gates` loads half.
  *              `revive` resets dead channels of a checkpoint to the pass-through init before adapting.
- *   speed      training: deterministic parallel backward (phase 1 over outputs, phase 2 over input channels in
- *              the serial order), ~0.4 s/step (16x1024, seq 64, batch 32, 8 cores). The binary sets
- *              OMP_WAIT_POLICY=passive itself: spinning OpenMP threads cost 5-10x on SMT machines.
+ *   speed      training, hard forward: each block's forward pass runs on packed bits (64 texts per word, every
+ *              gate a mux, the inference engine's method); the backward pass takes the tree's node bits from the
+ *              same words and uses the exact binary-input gate gradients (one corner gets u, d/da and d/db are
+ *              corner differences). Deterministic parallel backward (phase 1 over outputs, phase 2 over input
+ *              channels in the serial order). 4-core Xeon, 16x1024, seq 64: supervised batch 32 1.03 -> 0.69
+ *              s/step; pretraining batch 64 4.19 -> 3.41 s/step (the 30k-word output layer is now ~2/3 of it).
+ *              The binary sets OMP_WAIT_POLICY=passive itself: spinning OpenMP threads cost 5-10x on SMT machines.
  *              Results are byte-identical at any thread count; --resume is bit-exact.
  *
  * FAST INFERENCE (same scores as the reference engine, checked by `verify`)
