@@ -1,0 +1,41 @@
+{
+ "args": {
+  "window": 16,
+  "levels": 8,
+  "gapmax": 4.0,
+  "width": 0.25,
+  "tau": null,
+  "coarse": 8,
+  "steps": 400,
+  "batch": 32,
+  "lr": 0.01,
+  "local": 1.0,
+  "eval_every": 200,
+  "eval_windows": 2048,
+  "seed": 0,
+  "out": "runs/gf_w16.pt",
+  "check": false,
+  "diag": ""
+ },
+ "teacher": {
+  "ce": 1.9620342627167702,
+  "acc": 0.43419647216796875,
+  "unigram": 3.198560700774147
+ },
+ "step0": {
+  "ce": 1.9697576761245728,
+  "acc": 0.4315338134765625,
+  "gain": 0.993753943975564,
+  "effort": 1.0
+ },
+ "final": {
+  "step": 400,
+  "kl": 0.0075,
+  "local": 0.0069,
+  "ce": 1.9689,
+  "acc": 0.4322,
+  "gain": 0.9945,
+  "effort": 1.0,
+  "sec": 82.5
+ }
+}
