@@ -110,7 +110,7 @@ Notes:
 ```
 ./fastlae verify m.lth data.ids 64                 # every score == the reference engine
 ./fastlae predict m.lth data.ids 64 --lanes 8      # same output as lt predict
-make gen MODEL=m.lth DATA=data.ids SEQ=64          # fastgen: the model compiled to straight-line C (T <= 64)
+make gen MODEL=m.lth DATA=data.ids SEQ=64          # fastgen: the model compiled to straight-line C for SEQ (<= 512)
 ./fastgen bench m.lth data.ids 64 --batch 1 --lanes 1 --threads 1
 ```
 
@@ -130,7 +130,7 @@ bert-tiny on the same CPU: ~1.4 ms per text.
   - Even with hard-forward fine-tuning, the pretrained model trails scratch (0.669–0.688 vs 0.764 on SST-2).
   - The pretraining fix (hard-forward pretraining, dead-channel revival) is being vetted in stage2/logicae/vet.py.
 - Binary head only (K-way = one model per option).
-- `fastgen` needs T ≤ 64; `fastlae` handles up to 512.
+- `fastgen` is built for one context length band (1-64, 65-128, ..., 449-512 tokens); `fastlae` handles any length up to 512.
 
 ## Rebuilding logic_text.c
 

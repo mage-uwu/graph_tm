@@ -1,7 +1,7 @@
 # fast_logicae: standalone LogicAE (DDLGN) training + fast inference. Needs gcc with OpenMP, nothing else.
 #   make                 fastlogic (everything, one file) + the split tools lt, fastlae, hardcheck
 #   make check           selftest (gradient contract, packed == scalar, checkpoint round trip)
-#   make gen MODEL=m.lth DATA=d.ids SEQ=64    fastgen: m compiled to straight-line C (T <= 64; ~2 min for 16x1024)
+#   make gen MODEL=m.lth DATA=d.ids SEQ=64    fastgen: m compiled to straight-line C for SEQ <= 512 (~2.5-7 min for 16x1024)
 # lt is built -std=c11 on purpose: gnu11 lets gcc contract a*b+c into FMA, which changes training bits.
 CC ?= gcc
 OPT = -O3 -march=native -fopenmp -Wno-unknown-pragmas

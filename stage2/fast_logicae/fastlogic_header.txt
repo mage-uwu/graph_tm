@@ -59,18 +59,24 @@
  *   interpreter  one text per 64-bit word: bit t = token position t, one word per channel (T <= 512).
  *                A convolution tap is a shift. A gate is a branch-free mux from a 16-entry mask table.
  *                --lanes 1/2/4/8 runs texts side by side in one vector register.
- *   compiled     `fastlogic gen` writes the model as straight-line C (each gate one bitwise op, each leaf a
- *                shift), then build this same file with it included:
+ *   compiled     `fastlogic gen MODEL DATA SEQ model.inc` writes the model as straight-line C for that context length
+ *                (each gate one bitwise op, each leaf a shift; over 64 tokens, a two-word shift across padded words,
+ *                one word loop per block), then build this same file with it included:
  *                gcc -O2 -march=native -std=c11 -fopenmp -DGEN_INC='"model.inc"' fastlogic.c -lm -o fastlogic_m
- *                4-core Xeon, 64 tokens, 16x1024: 0.075 ms per text on 1 thread (reference 44.5 ms),
- *                266k texts/s on 4 threads. bert-tiny on the same CPU: ~1.4 ms per text.
+ *                One build serves one words-per-channel count: SEQ 1-64, 65-128, ..., 449-512 (other lengths use the
+ *                interpreter). Compile time ~2.5 min (64 tokens) to ~4-7 min (256-512) for 16x1024.
+ *                4-core Xeon, 16x1024, compiled vs bert-tiny (PyTorch fp32), same machine, every score verified:
+ *                  64 tokens:  1 text 83 us vs 2934 us (35x); batch 500, 4 threads 3.9 vs 417 us/text (107x)
+ *                  256 tokens: 1 text 190 us vs 5228 us (27x); batch 256, 4 threads 18 vs 2218 us/text (123x)
+ *                  512 tokens: 1 text 388 us vs 16382 us (42x); batch 256, 4 threads 39 vs 5394 us/text (138x)
+ *                The compiled model is 8-17x faster than the interpreter at 256-512 tokens.
  *
  * DATA: `--format ids` lines `LABEL id id ...` (LABEL 0/1, or -1 unlabeled). Reserved ids: 0 PAD, 1 MASK,
  * 2 UNK; [SEP] = 102. Longer records are cut to --seq, shorter ones PAD-filled.
  *
  * KNOWN LIMITS: pretraining transfer is established on one task so far. Hard-forward pretraining (3000 steps,
  * ~12M tokens) then adaptation: SST-2 0.805 vs scratch 0.772; soft pretraining 0.766. QNLI was flat for every
- * arm (0.588) without the pair options. Binary head. The compiled model needs T <= 64.
+ * arm (0.588) without the pair options. Binary head. Inputs up to 512 tokens.
  *
  * FILE MAP: training engine (codes, gate trees, objectives, Adam, checkpoints, hardening, CLI) | fast inference
  * (interpreter, lanes, compiler) | checks and tools (hardcheck, revive) | main | compiled-model hook.
@@ -90,7 +96,7 @@ fast inference (MODEL = .lth or .ltc; --lanes 8 --threads all by default)
   fastlogic predict MODEL DATA.ids SEQ          {"row","label","votes"} per record
   fastlogic verify  MODEL DATA.ids SEQ          every score == the reference engine, all lane widths
   fastlogic bench   MODEL DATA.ids SEQ --batch B [--lanes L] [--threads N] [--repeats R]
-  fastlogic gen     MODEL DATA.ids SEQ model.inc   then: gcc ... -DGEN_INC='"model.inc"' fastlogic.c
+  fastlogic gen     MODEL DATA.ids SEQ model.inc   compile for SEQ (<= 512): gcc ... -DGEN_INC='"model.inc"' fastlogic.c
 reference engine and tools
   fastlogic eval --load MODEL --data DATA.ids --seq 64      hardened accuracy
   fastlogic export --load m.ltc --out m.lth | info --load MODEL | predict-ref / bench-ref (reference engine)

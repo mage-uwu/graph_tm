@@ -59,18 +59,24 @@
  *   interpreter  one text per 64-bit word: bit t = token position t, one word per channel (T <= 512).
  *                A convolution tap is a shift. A gate is a branch-free mux from a 16-entry mask table.
  *                --lanes 1/2/4/8 runs texts side by side in one vector register.
- *   compiled     `fastlogic gen` writes the model as straight-line C (each gate one bitwise op, each leaf a
- *                shift), then build this same file with it included:
+ *   compiled     `fastlogic gen MODEL DATA SEQ model.inc` writes the model as straight-line C for that context length
+ *                (each gate one bitwise op, each leaf a shift; over 64 tokens, a two-word shift across padded words,
+ *                one word loop per block), then build this same file with it included:
  *                gcc -O2 -march=native -std=c11 -fopenmp -DGEN_INC='"model.inc"' fastlogic.c -lm -o fastlogic_m
- *                4-core Xeon, 64 tokens, 16x1024: 0.075 ms per text on 1 thread (reference 44.5 ms),
- *                266k texts/s on 4 threads. bert-tiny on the same CPU: ~1.4 ms per text.
+ *                One build serves one words-per-channel count: SEQ 1-64, 65-128, ..., 449-512 (other lengths use the
+ *                interpreter). Compile time ~2.5 min (64 tokens) to ~4-7 min (256-512) for 16x1024.
+ *                4-core Xeon, 16x1024, compiled vs bert-tiny (PyTorch fp32), same machine, every score verified:
+ *                  64 tokens:  1 text 83 us vs 2934 us (35x); batch 500, 4 threads 3.9 vs 417 us/text (107x)
+ *                  256 tokens: 1 text 190 us vs 5228 us (27x); batch 256, 4 threads 18 vs 2218 us/text (123x)
+ *                  512 tokens: 1 text 388 us vs 16382 us (42x); batch 256, 4 threads 39 vs 5394 us/text (138x)
+ *                The compiled model is 8-17x faster than the interpreter at 256-512 tokens.
  *
  * DATA: `--format ids` lines `LABEL id id ...` (LABEL 0/1, or -1 unlabeled). Reserved ids: 0 PAD, 1 MASK,
  * 2 UNK; [SEP] = 102. Longer records are cut to --seq, shorter ones PAD-filled.
  *
  * KNOWN LIMITS: pretraining transfer is established on one task so far. Hard-forward pretraining (3000 steps,
  * ~12M tokens) then adaptation: SST-2 0.805 vs scratch 0.772; soft pretraining 0.766. QNLI was flat for every
- * arm (0.588) without the pair options. Binary head. The compiled model needs T <= 64.
+ * arm (0.588) without the pair options. Binary head. Inputs up to 512 tokens.
  *
  * FILE MAP: training engine (codes, gate trees, objectives, Adam, checkpoints, hardening, CLI) | fast inference
  * (interpreter, lanes, compiler) | checks and tools (hardcheck, revive) | main | compiled-model hook.
@@ -1438,7 +1444,7 @@ static const char *USAGE=
 "  fastlogic predict MODEL DATA.ids SEQ          {\"row\",\"label\",\"votes\"} per record\n"
 "  fastlogic verify  MODEL DATA.ids SEQ          every score == the reference engine, all lane widths\n"
 "  fastlogic bench   MODEL DATA.ids SEQ --batch B [--lanes L] [--threads N] [--repeats R]\n"
-"  fastlogic gen     MODEL DATA.ids SEQ model.inc   then: gcc ... -DGEN_INC='\"model.inc\"' fastlogic.c\n"
+"  fastlogic gen     MODEL DATA.ids SEQ model.inc   compile for SEQ (<= 512): gcc ... -DGEN_INC='\"model.inc\"' fastlogic.c\n"
 "reference engine and tools\n"
 "  fastlogic eval --load MODEL --data DATA.ids --seq 64      hardened accuracy\n"
 "  fastlogic export --load m.ltc --out m.lth | info --load MODEL | predict-ref / bench-ref (reference engine)\n"
@@ -1686,12 +1692,11 @@ static void run_##L(const Fast *F, const uint32_t *ids, int n, V *a, V *b, int64
         }                                                                                                    \
     }                                                                                                        \
     V *cur = a, *nxt = b;                                                                                    \
-    if (GEN_OK(NW)) GEN_BLOCKS(L)(cur, nxt, valid[0]);                                                      \
+    if (GEN_OK(NW)) GEN_BLOCKS(L)(cur, nxt, valid);  /* compiled model: result left in cur */            \
     else for (int i = 0; i < h->c.blocks; i++) {                                                            \
         if (gblock(&h->c, i)) global_##L(h, cur, valid, NW);                                                 \
         layer_##L(F, h->l + i, cur, nxt, valid, NW); V *z = cur; cur = nxt; nxt = z;                         \
     }                                                                                                        \
-    if (GEN_OK(NW) && h->c.blocks % 2) { V *z = cur; cur = nxt; nxt = z; }                                   \
     /* pairwise OR pool over positions: pooled bit u = bit 2u | bit 2u+1 */                                  \
     int W = h->c.width;                                                                                      \
     memset(pvalid, 0, sizeof pvalid);                                                                        \
@@ -1745,14 +1750,16 @@ static void batch_##L(const Fast *F, const uint32_t *ids, int B, int64_t *scores
 /* Built with -DGEN_INC='"model.inc"' (from `fastlogic gen`), the blocks of that one model run as straight-line
  * word operations for T <= 64 (see the end of the file). Without it the interpreter runs every layer. */
 #ifdef GEN_INC
-#define GEN_OK(NW) ((NW) == 1)
+static int gen_nwords(void);  /* words per channel the model was compiled for (T <= 64 x that) */
+#define GEN_OK(NW) ((NW) == gen_nwords())
 #define GEN_BLOCKS(L) gen_blocks_##L
-#define GEN_DECL(L, V) static void gen_blocks_##L(V *a, V *b, V valid);
+#define GEN_DECL(L, V) static void gen_blocks_##L(V *a, V *b, const V *valid);
 GEN_DECL(1, v1) GEN_DECL(2, v2) GEN_DECL(4, v4) GEN_DECL(8, v8)
 #else
 #define GEN_OK(NW) 0
 #define GEN_BLOCKS(L) gen_none
 #define gen_none(a, b, v) ((void)0)
+#define gen_nwords() 0
 #endif
 KERNEL(1, v1)
 KERNEL(2, v2)
@@ -1825,21 +1832,34 @@ static int fast_main(int argc, char **argv) {
         fprintf(stderr, "labeled=%d correct=%d accuracy=%.6f\n", labeled, hit, labeled ? (double)hit / labeled : 0.);
         return 0;
     }
-    if (!strcmp(cmd, "gen")) {  /* fastlae gen MODEL.lth - SEQ OUT.inc: blocks as straight-line C */
+    if (!strcmp(cmd, "gen")) {  /* gen MODEL DATA SEQ OUT.inc: the blocks as straight-line C for this SEQ */
         const char *ops[16] = {"Z", "~(A|B)", "(~A&B)", "~A", "(A&~B)", "~B", "(A^B)", "~(A&B)",
                                "(A&B)", "~(A^B)", "B", "(~A|B)", "A", "(A|~B)", "(A|B)", "~Z"};
+        int NWg = F->NW, PW = NWg == 1 ? 1 : NWg + 2, P0 = NWg == 1 ? 0 : 1;  /* multi-word: 1 zero pad word each side */
+        int W = h->c.width, C0 = h->c.bits + h->c.match, MC = W + (h->c.gevery ? h->c.gch : 0);
+        if (MC < C0) MC = C0;
         FILE *o = open_file(argv[5], "w");
-        fprintf(o, "/* generated by fastlogic gen from %s: %d blocks x %d outputs, T <= 64 */\n", argv[2], h->c.blocks, h->c.width);
+        fprintf(o, "/* generated by fastlogic gen from %s: %d blocks x %d outputs, T <= %d (%d word%s per channel) */\n",
+                argv[2], h->c.blocks, W, 64 * NWg, NWg, NWg > 1 ? "s" : "");
+        fprintf(o, "#define GEN_NWORDS %d\n", NWg);
         for (int i = 0; i < h->c.blocks; i++) {
             HLayer *l = h->l + i;
-            fprintf(o, "static void GEN_L(blk%d)(const V *restrict x, V *restrict y, V valid) {\n  const V Z = {0};\n", i);
+            fprintf(o, "static void GEN_L(blk%d)(const V *restrict x, V *restrict y, const V *valid) {\n  const V Z = {0}; (void)Z;\n", i);
+            if (NWg > 1) fprintf(o, "  for (int w = 0; w < %d; w++) {  /* one word loop per block: straight-line outputs inside */\n", NWg);
             for (int oo = 0; oo < l->O; oo++) {
                 fprintf(o, "  { ");
                 for (int k = 0; k < l->R; k++) {
-                    int c = l->ch[(size_t)oo * l->R + k], dd = l->off[(size_t)oo * l->R + k] * l->dilation;
-                    if (dd == 0) fprintf(o, "V g%d = x[%d]; ", l->N + k, c);
-                    else if (dd >= 64 || dd <= -64) fprintf(o, "V g%d = Z; ", l->N + k);
-                    else fprintf(o, "V g%d = x[%d] %s %d; ", l->N + k, c, dd > 0 ? ">>" : "<<", dd > 0 ? dd : -dd);
+                    int c = l->ch[(size_t)oo * l->R + k], dd = l->off[(size_t)oo * l->R + k] * l->dilation, base = c * PW + P0;
+                    if (NWg == 1) {
+                        if (dd == 0) fprintf(o, "V g%d = x[%d]; ", l->N + k, c);
+                        else if (dd >= 64 || dd <= -64) fprintf(o, "V g%d = Z; ", l->N + k);
+                        else fprintf(o, "V g%d = x[%d] %s %d; ", l->N + k, c, dd > 0 ? ">>" : "<<", dd > 0 ? dd : -dd);
+                    } else {  /* position t reads t + dd: word w from words w + floor(dd/64) and the next one */
+                        if (dd >= 64 || dd <= -64) die("gen: tap offset %d needs |offset| < 64 for multi-word models", dd);
+                        if (dd == 0) fprintf(o, "V g%d = x[%d + w]; ", l->N + k, base);
+                        else if (dd > 0) fprintf(o, "V g%d = (x[%d + w] >> %d) | (x[%d + w] << %d); ", l->N + k, base, dd, base + 1, 64 - dd);
+                        else fprintf(o, "V g%d = (x[%d + w] >> %d) | (x[%d + w] << %d); ", l->N + k, base - 1, 64 + dd, base, -dd);
+                    }
                 }
                 for (int j = l->N - 1; j >= 0; j--) {
                     char e[64]; const char *p = ops[l->f[(size_t)oo * l->N + j]]; int n = 0;
@@ -1851,27 +1871,47 @@ static int fast_main(int argc, char **argv) {
                     e[n] = 0;
                     fprintf(o, "V g%d = %s; ", j, e);
                 }
-                fprintf(o, "y[%d] = g0 & valid; }\n", oo);
+                if (NWg == 1) fprintf(o, "y[%d] = g0 & valid[0]; }\n", oo);
+                else fprintf(o, "y[%d + w] = g0 & valid[w]; }\n", oo * PW + P0);
             }
+            if (NWg > 1) fprintf(o, "  }\n");
             fprintf(o, "}\n");
         }
-        fprintf(o, "static void GEN_L(blocks)(V *a, V *b, V valid) {\n");
-        for (int i = 0; i < h->c.blocks; i++) {
-            const char *src = i % 2 ? "b" : "a";
-            if (gblock(&h->c, i)) {  /* global view: pool the first G channels into W..W+G-1 */
-                if (h->c.gmean)
-                    fprintf(o, "  for (int c = 0; c < %d; c++) { V m = {0}; for (int e = 0; e < (int)(sizeof(V) / 8); e++)"
-                               " m[e] = 2 * __builtin_popcountll(%s[c][e]) > __builtin_popcountll(valid[e]) ? ~0ULL : 0; %s[%d + c] = m & valid; }\n",
-                            h->c.gch, src, src, h->c.width);
-                else
-                    fprintf(o, "  { const V Z = {0}; for (int c = 0; c < %d; c++) %s[%d + c] = (V)(%s[c] != Z) & valid; }\n",
-                            h->c.gch, src, h->c.width, src);
-            }
-            fprintf(o, "  GEN_L(blk%d)(%s, %s, valid);\n", i, src, i % 2 ? "a" : "b");
+        /* driver: a = input (interpreter layout c*NW+w), b = scratch; the result is left in a */
+        fprintf(o, "static void GEN_L(blocks)(V *a, V *b, const V *valid) {\n");
+        if (NWg == 1) fprintf(o, "  V *A = a, *B = b;\n");
+        else {
+            fprintf(o, "  static _Thread_local V *A = 0, *B = 0;\n"
+                       "  if (!A) { A = aligned_alloc(64, sizeof(V) * %d); B = aligned_alloc(64, sizeof(V) * %d);\n"
+                       "    memset(A, 0, sizeof(V) * %d); memset(B, 0, sizeof(V) * %d); }\n",
+                    MC * PW, MC * PW, MC * PW, MC * PW);
+            fprintf(o, "  for (int c = 0; c < %d; c++) for (int w = 0; w < %d; w++) A[c * %d + %d + w] = a[c * %d + w];\n",
+                    C0, NWg, PW, P0, NWg);
         }
+        for (int i = 0; i < h->c.blocks; i++) {
+            const char *src = i % 2 ? "B" : "A";
+            if (gblock(&h->c, i)) {  /* global view: pool the first G channels into W..W+G-1 (as global_L) */
+                if (h->c.gmean)
+                    fprintf(o, "  for (int c = 0; c < %d; c++) { V m = {0}; for (int e = 0; e < (int)(sizeof(V) / 8); e++) {"
+                               " int cnt = 0, nv = 0; for (int w = 0; w < %d; w++) { cnt += __builtin_popcountll(%s[c * %d + %d + w][e]);"
+                               " nv += __builtin_popcountll(valid[w][e]); } m[e] = 2 * cnt > nv ? ~0ULL : 0; }"
+                               " for (int w = 0; w < %d; w++) %s[(%d + c) * %d + %d + w] = m & valid[w]; }\n",
+                            h->c.gch, NWg, src, PW, P0, NWg, src, W, PW, P0);
+                else
+                    fprintf(o, "  for (int c = 0; c < %d; c++) { const V Z = {0}; V nz = Z; for (int w = 0; w < %d; w++) nz |= %s[c * %d + %d + w];"
+                               " V m = (V)(nz != Z); for (int w = 0; w < %d; w++) %s[(%d + c) * %d + %d + w] = m & valid[w]; }\n",
+                            h->c.gch, NWg, src, PW, P0, NWg, src, W, PW, P0);
+            }
+            fprintf(o, "  GEN_L(blk%d)(%s, %s, valid);\n", i, src, i % 2 ? "A" : "B");
+        }
+        const char *fin = h->c.blocks % 2 ? "B" : "A";
+        if (NWg == 1) { if (h->c.blocks % 2) fprintf(o, "  memcpy(a, b, sizeof(V) * %d);\n", W); }
+        else fprintf(o, "  for (int c = 0; c < %d; c++) for (int w = 0; w < %d; w++) a[c * %d + w] = %s[c * %d + %d + w];\n",
+                     W, NWg, NWg, fin, PW, P0);
         fprintf(o, "}\n");
         fclose(o);
-        printf("{\"generated\":\"%s\",\"blocks\":%d,\"outputs\":%d}\n", argv[5], h->c.blocks, h->c.blocks * h->c.width);
+        printf("{\"generated\":\"%s\",\"blocks\":%d,\"outputs\":%d,\"seq_max\":%d,\"words\":%d}\n", argv[5], h->c.blocks,
+               h->c.blocks * W, 64 * NWg, NWg);
         return 0;
     }
     if (!strcmp(cmd, "bench")) {
@@ -1987,8 +2027,9 @@ int main(int argc,char **argv){
 #include GEN_INC
 #undef V
 #undef GEN_L
-static void gen_blocks_1(v1 *a, v1 *b, v1 valid) { blocks_1(a, b, valid); }
-static void gen_blocks_2(v2 *a, v2 *b, v2 valid) { blocks_2(a, b, valid); }
-static void gen_blocks_4(v4 *a, v4 *b, v4 valid) { blocks_4(a, b, valid); }
-static void gen_blocks_8(v8 *a, v8 *b, v8 valid) { blocks_8(a, b, valid); }
+static void gen_blocks_1(v1 *a, v1 *b, const v1 *valid) { blocks_1(a, b, valid); }
+static void gen_blocks_2(v2 *a, v2 *b, const v2 *valid) { blocks_2(a, b, valid); }
+static void gen_blocks_4(v4 *a, v4 *b, const v4 *valid) { blocks_4(a, b, valid); }
+static void gen_blocks_8(v8 *a, v8 *b, const v8 *valid) { blocks_8(a, b, valid); }
+static int gen_nwords(void) { return GEN_NWORDS; }
 #endif
