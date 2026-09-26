@@ -122,3 +122,25 @@ transfers (+2.6 over this scratch). Candidates (untested): (1) the pair options 
 streamed chunks (non-iid: each chunk holds ~160k windows from consecutive articles; vetting sampled windows
 uniformly over the corpus); (3) the longer schedule. Next: 3k-step hard pretraining with pairs on iid windows vs
 without pairs on stream-order chunks, then the same SST-2 fine-tune.
+
+## A/B follow-up (`stage2/fast_logicae/ab.py`, 2026-09-26): the schedule length, not pairs or data order
+
+3k-step hard-forward pretraining (the vetting recipe), side by side on 16 vCPU, then the same SST-2 fine-tune.
+Raw: `stage2/fast_logicae/ab_results/`; models `models/logicae/ab_*.pt`.
+
+| pretraining (3k steps) | masked-word acc@1 / acc@10 | dead channels | SST-2 test | scratch (same options) | gain |
+|---|---|---|---|---|---|
+| A: pair options, iid windows | 0.135 / 0.350 | 30.4% | 0.792 | 0.779 | +1.3 |
+| B: no pair options, article-order chunks (as the long run) | 0.134 / 0.338 | 31.1% | **0.805** | 0.772 | **+3.3** |
+| vetting hard64: no pair options, iid windows | 0.141 / 0.327 | 29.9% | 0.805 | 0.772 | +3.3 |
+| long run: pair options, article order, 30k steps | 0.204 / 0.416 | 41.9% | 0.743 | 0.779 | -3.6 |
+| long run at 7.5k of 30k steps | 0.188 / 0.401 | 39.9% | 0.751 | 0.779 | -2.8 |
+
+Verdict: neither the pair options nor article-order data broke transfer; at 3k steps both still beat scratch (the
+pair options cost ~2 points of gain on SST-2, which has no text pairs). What differs is the length of
+pretraining: the longer the masked-word training, the better the masked-word model and the worse the adaptation,
+tracking the dead-channel share (30% at 3k -> 40-42% from 7.5k on). More masked-word training specializes the
+trunk and removes plasticity; the 3k-step models are still plastic.
+Next: keep the trunk alive during long pretraining, which the vetting run already showed is possible (dead-channel
+revival every 500 steps held 2.3% dead): a long run with revival (and checkpoints scored by adaptation, not by
+masked-word loss), vs early stopping at ~3k steps as the current best reusable recipe.

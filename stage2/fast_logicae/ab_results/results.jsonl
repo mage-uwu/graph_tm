@@ -1,0 +1,4 @@
+{"phase": "pretrain", "arm": "B_nopairs_stream", "pairs": false, "data": "stream-order", "steps": 3000, "val_mlm_ce": 6.351648, "minutes": 36.2, "acc1": 0.1335, "acc10": 0.338, "ce_probe": 6.7254, "dead_share": 0.311}
+{"phase": "pretrain", "arm": "A_pairs_iid", "pairs": true, "data": "iid", "steps": 3000, "val_mlm_ce": 6.316449, "minutes": 37.4, "acc1": 0.1345, "acc10": 0.3495, "ce_probe": 6.6491, "dead_share": 0.304}
+{"phase": "adapt", "task": "sst2", "init": "B_nopairs_stream", "steps": 1000, "dev": 0.841, "test": 0.80504587, "dev1k_curve": [0.72, 0.819, 0.843, 0.851], "minutes": 6.1}
+{"phase": "adapt", "task": "sst2", "init": "A_pairs_iid", "steps": 1000, "dev": 0.851, "test": 0.79243119, "dev1k_curve": [0.737, 0.812, 0.846, 0.855], "minutes": 6.3}
