@@ -29,8 +29,9 @@
  *              SST-2, 600 steps, hardened test accuracy:
  *                  from scratch      soft 0.751 -> hard forward 0.764
  *                  from pretraining  soft 0.509 (stuck at a constant answer) -> hard forward 0.669
- *              and in masked-word pretraining the hard forward pass keeps the trunk alive: 10.6% dead
- *              channels vs 66.9% soft at step 500, same masked-word accuracy.
+ *              and in masked-word pretraining it keeps the trunk alive (30% dead channels vs 71% soft) and
+ *              is the first pretraining that transfers: SST-2 0.805 after pretraining vs 0.772 from scratch
+ *              (soft pretraining: 0.766), although soft is the better masked-word model.
  *              `--soft-forward` restores the relaxation. `hardcheck` proves training forward == deployed
  *              network, record by record.
  *   optimiser  Adam, peak lr .025, cosine to 10%. Code temperature anneals 1.0 -> 0.2 over the first 80%.
@@ -60,9 +61,9 @@
  * DATA: `--format ids` lines `LABEL id id ...` (LABEL 0/1, or -1 unlabeled). Reserved ids: 0 PAD, 1 MASK,
  * 2 UNK; [SEP] = 102. Longer records are cut to --seq, shorter ones PAD-filled.
  *
- * KNOWN LIMITS: masked-word pretraining does not yet beat scratch after adaptation (SST-2 0.669-0.688 vs
- * 0.764). The dead-channel failure is understood and fixed by the hard forward pass; transfer is being
- * vetted. Binary head. The compiled model needs T <= 64.
+ * KNOWN LIMITS: pretraining transfer is established on one task so far. Hard-forward pretraining (3000 steps,
+ * ~12M tokens) then adaptation: SST-2 0.805 vs scratch 0.772; soft pretraining 0.766. QNLI was flat for every
+ * arm (0.588) without the pair options. Binary head. The compiled model needs T <= 64.
  *
  * FILE MAP: training engine (codes, gate trees, objectives, Adam, checkpoints, hardening, CLI) | fast inference
  * (interpreter, lanes, compiler) | checks and tools (hardcheck, revive) | main | compiled-model hook.

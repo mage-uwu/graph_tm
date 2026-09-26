@@ -71,3 +71,32 @@ byte-identical to the unpatched build. Same SST-2 setup (600 steps, hard accurac
 - Pretrained is still below scratch at 600 steps (0.688 vs 0.764 best), but the gap shrank from 24 to 8 points,
   and pretrained starts faster (dev 0.598 vs 0.514 at step 100). What remains is the dead / saturated trunk
   that pretraining leaves: fix it in pretraining (see Next), and pretrain with --hard-forward as well.
+
+## Vetting: soft vs hard-forward pretraining, then adaptation (`../vet.py`, logicAE pod, 2026-09-25)
+
+Same 4.4M model, 64-token WikiText-103 windows (streamed), batch 64, 512 masked words/batch, 3000 steps each
+(~12M tokens; a fifth of run 1's masked words), three arms in parallel on 16 vCPU. Adaptation: straight-through,
+1000 steps, batch 32, seed 17, final-step hardened accuracy. Raw: `../vet_results/`.
+
+| pretraining | masked-word acc@1 / acc@10 (65-token context) | dead channels | SST-2 test | QNLI test |
+|---|---|---|---|---|
+| none (scratch) | - | - | 0.772 | 0.588 |
+| run 1 (soft, 17-token windows) | 0.194 / 0.421 | 68% | 0.729 | 0.588 |
+| soft64 | **0.186 / 0.395** | 70.7% | 0.766 | 0.586 |
+| **hard64** (straight-through) | 0.141 / 0.327 | 29.9% | **0.805** | 0.588 |
+| hardrev64 (+ dead-channel reset every 500 steps) | 0.118 / 0.342 | 2.3% | 0.797 | 0.588 |
+
+SST-2 dev (1k) curves, every 250 steps: scratch .662 .787 .819 .841; hard64 .750 .810 .855 .862;
+hardrev64 .765 .816 .840 .850; soft64 .655 .748 .796 .812.
+
+Verdict:
+- Pretraining against the hard network is the first LogicAE pretraining that transfers. SST-2: +3.3 over scratch
+  (0.805 vs 0.772; test n=872, ~1.4 pt standard error, one seed), and much faster early (0.750 vs 0.662 dev
+  at step 250). Soft pretraining at the same budget does not (0.766).
+- Masked-word accuracy does not predict transfer: soft is the best masked-word model and the worst transfer.
+  What predicts it is a live trunk trained on the deployed (hard) network.
+- QNLI: every arm lands at 0.586-0.588, pretrained or not. Without `--match` the architecture cannot relate
+  question and sentence tokens (known: 0.580 -> 0.710 with match + majority pooling), so this test says nothing
+  about transfer. Next: re-test QNLI with the pair options on, and a longer hard64 pretraining run (5-10x).
+- Models: `models/logicae/pt_hard64.ltc`, `pt_hardrev64.ltc` (MANIFEST.txt). fastlogic.c defaults pretraining to
+  the hard forward pass.
