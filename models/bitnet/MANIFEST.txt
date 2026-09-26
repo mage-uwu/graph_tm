@@ -1,7 +1,22 @@
-Tiny BitNet b1.58 weights from stage_B/bitnet/bitnet.c (float latent weights; ternary form = sign-round of W / mean|W|).
-Format: "BITNET01" (8 bytes), the Cfg struct, then every tensor's float32 weights in creation order
-(tok, pos, per sublayer: norm gain, BitLinear a, BitLinear b; final norm gain, head).
+Tiny BitNet b1.58 byte-level language models from stage_B/bitnet/bitnet.c (format BITNET02: header with the
+architecture, then float32 latent weights; the ternary / int8 model is derived on load).
 
-text_full_2k.bin  --task text --data <WikiText-103 validation raw text, 1.1 MB> --arch full --steps 2000 (defaults
-                  otherwise: d 128, 2 layers, 4 heads, hidden 512, seq 64, batch 32, seed 1). val 1.888 nats/byte.
-copy_full.bin     --task copy --arch full --steps 200. val acc 1.000, val loss 0.0005.
+Training: --task text --data wiki_11m.txt --steps 3000 --eval-every 500 --eval-batches 8 (defaults otherwise: d 128,
+2 layers, 4 heads, hidden 512, seq 64, batch 32, lr 3e-3, seed 1). wiki_11m.txt = the first 10,102,653 bytes of
+WikiText-103 raw train text (streamed, paragraphs one per line, headings dropped) followed by the whole WikiText-103
+validation text (1,122,517 bytes), so bitnet's 90/10 split puts exactly the validation text in the validation part.
+3000 steps x 2048 bytes = 6.1M training bytes, no repeats.
+
+Validation = every 64-byte window of the WikiText-103 validation text (bitnet eval), nats per byte:
+
+model             arch  params   val loss  bits/byte  next-byte acc  train time (4-core Xeon)
+bitnet_attn.bin   attn  205,184  1.954175  2.819      0.435          55 s
+bitnet_mlp.bin    mlp   336,256  2.459523  3.548      0.286          73 s   (no token mixing: a bigram model)
+bitnet_full.bin   full  467,584  1.710310  2.467      0.501          112 s
+
+  ./bitnet eval   --load bitnet_full.bin --data wiki_11m.txt
+  ./bitnet sample --load bitnet_full.bin --prompt "The history of the " --tokens 200 --temp .7
+  ./bitnet train  --load bitnet_full.bin --data more.txt --steps N --lr 1e-3     (fresh AdamW + schedule)
+sha256 7c461b652fc10bbb...  bitnet_attn.bin
+sha256 c99893c953ad9ee3...  bitnet_full.bin
+sha256 639bd4e2b3555b09...  bitnet_mlp.bin

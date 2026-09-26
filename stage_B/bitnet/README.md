@@ -7,8 +7,30 @@ seconds; it is not meant for full-size runs.
 gcc -O3 -march=native -fopenmp bitnet.c -lm -o bitnet
 ./bitnet selftest
 ./bitnet train --task copy --arch full --steps 200
-./bitnet train --task text --data input.txt --arch full --steps 2000
+./bitnet train --task text --data input.txt --arch full --steps 2000 --save m.bin
+./bitnet eval   --load m.bin --data input.txt          # full validation: every --seq window of the last 10%
+./bitnet sample --load m.bin --prompt "The " --tokens 200 --temp .7
+./bitnet train  --load m.bin --data more.txt --steps 500 --lr 1e-3   # continue (fresh AdamW + schedule)
 ```
+
+Model files (`BITNET02`) start with a header: vocab, seq, dim, layers, heads, hidden, arch, quant, task and the
+parameter count. The float32 latent weights follow. A loaded model takes its architecture and task from the file.
+Save → load is bit-exact: `eval` reproduces the training run's final validation number at any batch size or thread
+count, and `selftest` checks this.
+
+## Saved models (`models/bitnet/`, see its MANIFEST.txt)
+
+Byte-level models trained for 3,000 steps on 6.1M bytes of WikiText-103 training text, with defaults otherwise.
+Validation is every 64-byte window of the WikiText-103 validation text:
+
+| model | params | val loss (nats/byte) | bits/byte | next-byte acc | train time |
+|---|---|---|---|---|---|
+| `bitnet_attn.bin` (attention only) | 205k | 1.954 | 2.82 | 0.435 | 55 s |
+| `bitnet_mlp.bin` (MLP only) | 336k | 2.460 | 3.55 | 0.286 | 73 s |
+| `bitnet_full.bin` (full stack) | 468k | 1.710 | 2.47 | 0.501 | 112 s |
+
+`sample --prompt "The history of the " --temp .7` from the full model:
+"The history of the shouse islanding from the players most . " Olyal would Carroy and Carathy appitaries ..."
 
 ## Model
 
@@ -49,6 +71,7 @@ gcc -O3 -march=native -fopenmp bitnet.c -lm -o bitnet
 **Selftest:**
 - Float-mode gradient check against central differences: max relative error 4e-3 (attn, mlp, full).
 - Weights bit-identical at 1 and 4 threads.
+- Save → load gives identical weights and an identical full validation loss, for all three archs.
 - ASan + UBSan: clean on ragged sizes (d 48, 3 heads, hidden 80, seq 13, vocab 17/19/256) and on the selftest.
 - ThreadSanitizer can't check this binary: stock libgomp is not instrumented, so every report is a write before
   an OpenMP implicit barrier read after it. The thread-count bit-identity check stands in for it.

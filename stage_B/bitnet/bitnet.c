@@ -60,7 +60,7 @@ static double unif(uint64_t seed, uint64_t tag, uint64_t i) { return ((rnd(seed,
 static float gauss(uint64_t seed, uint64_t tag, uint64_t i) {
     return (float)(sqrt(-2 * log(unif(seed, tag, 2 * i))) * cos(6.283185307179586 * unif(seed, tag, 2 * i + 1)));
 }
-enum { TAG_INIT = 1000, TAG_TRAIN = 1, TAG_VAL = 2 };
+enum { TAG_INIT = 1000, TAG_TRAIN = 1, TAG_VAL = 2, TAG_SAMPLE = 3 };
 
 /* ------------------------------------ GEMM ------------------------------------ */
 typedef float v16 __attribute__((vector_size(64)));
@@ -137,7 +137,7 @@ typedef struct {
 } Sub;
 typedef struct {
     int V, T, d, L, H, hid, arch, quant, B, steps, warm, eval_every, eval_batches, task, threads;
-    float lr, wd, clip; uint64_t seed; const char *data, *save;
+    float lr, wd, clip, temp; uint64_t seed; const char *data, *save, *load, *prompt; int ntok;
 } Cfg;
 typedef struct {
     Cfg c; int S, N; Ten ts[256]; int nt; Ten *tok, *pos, *gf, *head; Sub *sub;
@@ -461,23 +461,24 @@ static Text text_load(const char *path) {
     t.b = xalloc(len); if (fread(t.b, 1, len, f) != (size_t)len) die("read %s", path); fclose(f);
     t.n = len; t.ntrain = len * 9 / 10; return t;
 }
-/* fill ids / tgt / wt with batch `index` of stream `tag` */
-static void batch(Net *n, const Text *tx, uint64_t tag, uint64_t index) {
-    const Cfg *c = &n->c; int T = c->T;
-    for (int b = 0; b < c->B; b++) {
-        uint64_t r = index * c->B + b; int *id = n->ids + b * T, *tg = n->tgt + b * T; float *w = n->wt + b * T;
-        if (c->task == 0) {       /* copy: x = s_1..s_h SEP s_1..s_h, h = T/2 */
-            int h = T / 2, x[2 * 1024 + 2];
-            for (int j = 0; j < h; j++) x[j] = x[h + 1 + j] = (int)(rnd(c->seed, tag, r * h + j) % 16);
-            x[h] = 16;
-            for (int t = 0; t < T; t++) { id[t] = x[t]; tg[t] = x[t + 1]; w[t] = t >= h; }
-        } else {
-            size_t lo = tag == TAG_TRAIN ? 0 : tx->ntrain, hi = tag == TAG_TRAIN ? tx->ntrain : tx->n;
-            if (hi - lo < (size_t)T + 2) die("--data too short for --seq");
-            size_t s = lo + rnd(c->seed, tag, r) % (hi - lo - T - 1);
-            for (int t = 0; t < T; t++) { id[t] = tx->b[s + t]; tg[t] = tx->b[s + t + 1]; w[t] = 1; }
-        }
+/* row b of the batch = example r of stream `tag` */
+static void fill_row(Net *n, const Text *tx, uint64_t tag, uint64_t r, int b) {
+    const Cfg *c = &n->c; int T = c->T, *id = n->ids + b * T, *tg = n->tgt + b * T; float *w = n->wt + b * T;
+    if (c->task == 0) {       /* copy: x = s_1..s_h SEP s_1..s_h, h = T/2 */
+        int h = T / 2, x[2 * 1024 + 2];
+        for (int j = 0; j < h; j++) x[j] = x[h + 1 + j] = (int)(rnd(c->seed, tag, r * h + j) % 16);
+        x[h] = 16;
+        for (int t = 0; t < T; t++) { id[t] = x[t]; tg[t] = x[t + 1]; w[t] = t >= h; }
+    } else {
+        size_t lo = tag == TAG_TRAIN ? 0 : tx->ntrain, hi = tag == TAG_TRAIN ? tx->ntrain : tx->n;
+        if (hi - lo < (size_t)T + 2) die("--data too short for --seq");
+        size_t s = lo + rnd(c->seed, tag, r) % (hi - lo - T - 1);
+        for (int t = 0; t < T; t++) { id[t] = tx->b[s + t]; tg[t] = tx->b[s + t + 1]; w[t] = 1; }
     }
+}
+/* batch `index` of stream `tag`: examples index * B .. index * B + B - 1 */
+static void batch(Net *n, const Text *tx, uint64_t tag, uint64_t index) {
+    for (int b = 0; b < n->c.B; b++) fill_row(n, tx, tag, index * n->c.B + b, b);
 }
 static double evaluate(Net *n, const Text *tx, double *acc) {
     double L = 0, A = 0, a;
@@ -493,10 +494,61 @@ static uint64_t weights_hash(Net *n) {
     }
     return h;
 }
+/* Full validation: text = every non-overlapping --seq window of the validation split, all positions; copy = 2,048
+ * fixed validation examples. Per-row losses do not depend on the batch size or thread count, and are summed in row
+ * order, so the number is reproducible from a saved model. */
+static double full_eval(Net *n, const Text *tx, double *acc) {
+    const Cfg *c = &n->c; int T = c->T; double L = 0, A = 0, W = 0;
+    quantize_all(n);
+    if (c->task == 0) {
+        enum { NEX = 2048 };   /* validation examples 0 .. NEX-1, whatever the batch size */
+        for (int e0 = 0; e0 < NEX; e0 += c->B) {
+            for (int b = 0; b < c->B; b++) {
+                fill_row(n, tx, TAG_VAL, (uint64_t)(e0 + b), b);
+                if (e0 + b >= NEX) for (int t = 0; t < T; t++) n->wt[b * T + t] = 0;
+            }
+            forward(n, NULL);
+            for (int i = 0; i < n->N; i++) { L += n->wt[i] * n->loss_i[i]; A += n->wt[i] * n->hit[i]; W += n->wt[i]; }
+        }
+    } else {
+        size_t nw = (tx->n - tx->ntrain - 1) / T;
+        for (size_t w0 = 0; w0 < nw; w0 += c->B) {
+            for (int b = 0; b < c->B; b++) {
+                size_t w = w0 + b, s = tx->ntrain + w * T; int *id = n->ids + b * T, *tg = n->tgt + b * T; float *wt = n->wt + b * T;
+                for (int t = 0; t < T; t++) {
+                    if (w < nw) { id[t] = tx->b[s + t]; tg[t] = tx->b[s + t + 1]; wt[t] = 1; }
+                    else { id[t] = 0; tg[t] = 0; wt[t] = 0; }
+                }
+            }
+            forward(n, NULL);
+            for (int i = 0; i < n->N; i++) { L += n->wt[i] * n->loss_i[i]; A += n->wt[i] * n->hit[i]; W += n->wt[i]; }
+        }
+    }
+    *acc = A / W; return L / W;
+}
+/* model file: "BITNET02", int32 V T d L H hid arch quant task, uint64 parameter count, float32 latent weights in
+ * tensor order (tok, pos, per sublayer: norm gain, BitLinear a, BitLinear b; final norm gain, head) */
 static void save(Net *n, const char *path) {
     FILE *f = fopen(path, "wb"); if (!f) die("cannot write %s", path);
-    fwrite("BITNET01", 1, 8, f); fwrite(&n->c, sizeof(Cfg), 1, f);
-    for (int t = 0; t < n->nt; t++) fwrite(n->ts[t].w, 4, n->ts[t].n, f);
+    const Cfg *c = &n->c; int32_t h[9] = {c->V, c->T, c->d, c->L, c->H, c->hid, c->arch, c->quant, c->task};
+    uint64_t np = nparams(n);
+    if (fwrite("BITNET02", 1, 8, f) != 8 || fwrite(h, 4, 9, f) != 9 || fwrite(&np, 8, 1, f) != 1) die("write %s", path);
+    for (int t = 0; t < n->nt; t++) if (fwrite(n->ts[t].w, 4, n->ts[t].n, f) != n->ts[t].n) die("write %s", path);
+    if (fclose(f)) die("write %s", path);
+}
+static FILE *open_model(const char *path, Cfg *c) {
+    FILE *f = fopen(path, "rb"); char mg[8]; int32_t h[9];
+    if (!f) die("cannot open %s", path);
+    if (fread(mg, 1, 8, f) != 8 || memcmp(mg, "BITNET02", 8) || fread(h, 4, 9, f) != 9) die("%s: not a bitnet model", path);
+    c->V = h[0]; c->T = h[1]; c->d = h[2]; c->L = h[3]; c->H = h[4]; c->hid = h[5]; c->arch = h[6]; c->quant = h[7];
+    c->task = h[8];
+    return f;
+}
+static void load_weights(Net *n, FILE *f, const char *path) {
+    uint64_t np;
+    if (fread(&np, 8, 1, f) != 1 || np != nparams(n)) die("%s: parameter count mismatch", path);
+    for (int t = 0; t < n->nt; t++) if (fread(n->ts[t].w, 4, n->ts[t].n, f) != n->ts[t].n) die("%s: truncated", path);
+    if (fgetc(f) != EOF) die("%s: trailing bytes", path);
     fclose(f);
 }
 
@@ -505,7 +557,7 @@ static Cfg defaults(void) {
     Cfg c = {0};
     c.V = 17; c.T = 64; c.d = 128; c.L = 2; c.H = 4; c.hid = 512; c.arch = 2; c.quant = 1; c.B = 32; c.steps = 300;
     c.warm = 20; c.eval_every = 50; c.eval_batches = 4; c.lr = 3e-3f; c.wd = .1f; c.clip = 1; c.seed = 1;
-    c.threads = 0; return c;
+    c.threads = 0; c.ntok = 200; c.temp = .8f; c.prompt = "The "; return c;
 }
 static const char *ARCH[] = {"attn", "mlp", "full"};
 static Cfg parse(int argc, char **argv) {
@@ -535,10 +587,15 @@ static Cfg parse(int argc, char **argv) {
         else if (!strcmp(k, "--threads")) c.threads = atoi(v);
         else if (!strcmp(k, "--quant")) c.quant = atoi(v);
         else if (!strcmp(k, "--vocab")) { c.V = atoi(v); vset = 1; }
+        else if (!strcmp(k, "--load")) c.load = v;
+        else if (!strcmp(k, "--prompt")) c.prompt = v;
+        else if (!strcmp(k, "--tokens")) c.ntok = atoi(v);
+        else if (!strcmp(k, "--temp")) c.temp = (float)atof(v);
         else die("unknown option %s", k);
     }
+    if (c.load) { fclose(open_model(c.load, &c)); vset = 1; }   /* the model file fixes the architecture and task */
     if (c.task == 1 && !vset) c.V = 256;
-    if (c.task == 1 && !c.data) die("--task text needs --data FILE");
+    if (c.task == 1 && !c.data && strcmp(argv[1], "sample")) die("--task text needs --data FILE");
     if (c.task == 0 && (c.V < 17 || c.T > 2048)) die("copy needs --vocab >= 17 and --seq <= 2048");
     if (c.L < 1 || c.d < 1 || c.H < 1 || c.hid < 1 || c.T < 2 || c.B < 1 || c.steps < 1 || c.warm < 1) die("bad sizes");
     return c;
@@ -547,6 +604,7 @@ static int train(Cfg c, int quiet, uint64_t *hash, double *final) {
     if (c.threads > 0) omp_set_num_threads(c.threads);
     Text tx = {0}; if (c.task == 1) tx = text_load(c.data);
     Net *n = net_new(c);
+    if (c.load) { Cfg h = c; load_weights(n, open_model(c.load, &h), c.load); }   /* fresh AdamW state and schedule */
     if (!quiet)
         printf("{\"arch\":\"%s\",\"task\":\"%s\",\"quant\":%d,\"layers\":%d,\"sublayers\":%d,\"dim\":%d,\"heads\":%d,"
                "\"hidden\":%d,\"seq\":%d,\"batch\":%d,\"vocab\":%d,\"params\":%zu,\"threads\":%d}\n",
@@ -569,9 +627,52 @@ static int train(Cfg c, int quiet, uint64_t *hash, double *final) {
     }
     if (hash) *hash = weights_hash(n);
     if (final) *final = vl;
+    if (!quiet) {
+        double fa, fl = full_eval(n, &tx, &fa);
+        printf("{\"final\":true,\"val_loss_full\":%.6f,\"val_acc_full\":%.6f%s", fl, fa, c.task ? "" : "}\n");
+        if (c.task) printf(",\"bits_per_byte\":%.6f}\n", fl / log(2));
+    }
     if (c.save) save(n, c.save);
     net_free(n); free(tx.b);
     return 0;
+}
+
+static int eval_cmd(Cfg c) {
+    if (!c.load) die("eval needs --load MODEL");
+    if (c.threads > 0) omp_set_num_threads(c.threads);
+    Text tx = {0}; if (c.task == 1) tx = text_load(c.data);
+    Net *n = net_new(c); Cfg h = c; load_weights(n, open_model(c.load, &h), c.load);
+    double fa, fl = full_eval(n, &tx, &fa);
+    printf("{\"model\":\"%s\",\"arch\":\"%s\",\"task\":\"%s\",\"params\":%zu,\"val_loss_full\":%.6f,\"val_acc_full\":%.6f",
+           c.load, ARCH[c.arch], c.task ? "text" : "copy", nparams(n), fl, fa);
+    if (c.task) printf(",\"bits_per_byte\":%.6f", fl / log(2));
+    printf("}\n"); net_free(n); free(tx.b); return 0;
+}
+/* sample bytes from a text model: temperature sampling (--temp 0 = greedy), counter-based draws */
+static int sample_cmd(Cfg c) {
+    if (!c.load) die("sample needs --load MODEL");
+    if (c.task != 1) die("sample needs a text model");
+    if (c.threads > 0) omp_set_num_threads(c.threads);
+    c.B = 1; Net *n = net_new(c); Cfg h = c; load_weights(n, open_model(c.load, &h), c.load); quantize_all(n);
+    size_t len = strlen(c.prompt), cap = len + c.ntok + 1; unsigned char *buf = xalloc(cap);
+    memcpy(buf, c.prompt, len); fwrite(buf, 1, len, stdout);
+    int T = c.T, V = c.V;
+    for (int k = 0; k < c.ntok; k++) {
+        int m = len < (size_t)T ? (int)len : T; const unsigned char *src = buf + len - m;
+        for (int t = 0; t < T; t++) { n->ids[t] = t < m ? src[t] : 0; n->tgt[t] = 0; n->wt[t] = t == m - 1; }
+        if (!m) { n->wt[0] = 1; }
+        forward(n, NULL);
+        const float *l = n->logits + (size_t)(m ? m - 1 : 0) * V; int pick = 0;
+        if (c.temp <= 0) { for (int j = 1; j < V; j++) if (l[j] > l[pick]) pick = j; }
+        else {
+            double mx = l[0], z = 0; for (int j = 1; j < V; j++) if (l[j] > mx) mx = l[j];
+            for (int j = 0; j < V; j++) z += exp((l[j] - mx) / c.temp);
+            double u = unif(c.seed, TAG_SAMPLE, k) * z, acc = 0; pick = V - 1;
+            for (int j = 0; j < V; j++) { acc += exp((l[j] - mx) / c.temp); if (u < acc) { pick = j; break; } }
+        }
+        buf[len++] = (unsigned char)pick; putchar(pick); fflush(stdout);
+    }
+    putchar('\n'); free(buf); net_free(n); return 0;
 }
 
 /* gradient check in float mode (--quant 0): analytic vs central differences on sampled parameters */
@@ -610,6 +711,16 @@ static int selftest(void) {
         printf("{\"check\":\"threads_1_vs_%d\",\"arch\":\"%s\",\"hash\":\"%016llx\",\"passed\":%s}\n",
                omp_get_num_procs(), ARCH[a], (unsigned long long)h1, pass ? "true" : "false");
     }
+    for (int a = 0; a < 3; a++) {   /* save -> load -> identical weights and identical full validation */
+        Cfg c = defaults(); c.arch = a; c.d = 48; c.H = 3; c.hid = 80; c.B = 5; c.T = 16;
+        const char *f = "bitnet_selftest.bin"; Net *n = net_new(c);
+        for (int t = 0; t < n->nt; t++) for (size_t i = 0; i < n->ts[t].n; i++) n->ts[t].w[i] += .1f * gauss(5, t, i);
+        double a1, l1 = full_eval(n, NULL, &a1); uint64_t h1 = weights_hash(n); save(n, f); net_free(n);
+        Cfg d = defaults(); d.B = 3; FILE *m = open_model(f, &d); n = net_new(d); load_weights(n, m, f); remove(f);
+        double a2, l2 = full_eval(n, NULL, &a2); int pass = h1 == weights_hash(n) && l1 == l2 && a1 == a2; ok &= pass;
+        printf("{\"check\":\"save_load\",\"arch\":\"%s\",\"val_loss_full\":%.6f,\"passed\":%s}\n", ARCH[a], l2, pass ? "true" : "false");
+        net_free(n);
+    }
     free(PA); free(PB); PA = PB = NULL; PAn = PBn = 0;
     printf("{\"selftest\":\"%s\"}\n", ok ? "passed" : "FAILED");
     return !ok;
@@ -619,10 +730,15 @@ int main(int argc, char **argv) {
         puts("bitnet train [--task copy|text] [--data FILE] [--arch attn|mlp|full] [--layers 2] [--dim 128] [--heads 4]\n"
              "             [--hidden 512] [--seq 64] [--batch 32] [--steps 300] [--lr 3e-3] [--wd .1] [--warmup 20]\n"
              "             [--eval-every 50] [--eval-batches 4] [--quant 1] [--seed 1] [--threads N] [--save m.bin]\n"
+             "             [--load m.bin]   continue from a saved model (its architecture and task; fresh AdamW + schedule)\n"
+             "bitnet eval   --load m.bin [--data FILE]      full validation loss (text: every --seq window of the last 10%)\n"
+             "bitnet sample --load m.bin [--prompt \"The \"] [--tokens 200] [--temp .8] [--seed 1]   text models\n"
              "bitnet selftest");
         return 0;
     }
     if (!strcmp(argv[1], "train")) { int r = train(parse(argc, argv), 0, NULL, NULL); free(PA); free(PB); return r; }
+    if (!strcmp(argv[1], "eval")) { int r = eval_cmd(parse(argc, argv)); free(PA); free(PB); return r; }
+    if (!strcmp(argv[1], "sample")) { int r = sample_cmd(parse(argc, argv)); free(PA); free(PB); return r; }
     if (!strcmp(argv[1], "selftest")) return selftest();
     die("unknown command %s (try help)", argv[1]);
 }
