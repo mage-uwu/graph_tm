@@ -1,0 +1,6 @@
+
+== bitnet_attn.bin: arch attn, 2 sublayers
+  float                              CE 1.954176 acc 0.4353 gain 1.0000 argmax==float 1.0000 KL(float||.) 0.00000  (48s)
+  nonorm                             CE 1.954176 acc 0.4353 gain 1.0000 argmax==float 1.0000 KL(float||.) 0.00000  (36s)
+  +fixres (F=12, E=8)                CE 1.955223 acc 0.4351 gain 0.9991 argmax==float 0.9786 KL(float||.) 0.00092  (40s)
+  +fixgain (G=8)                     CE 1.955242 acc 0.4351 gain 0.9991 argmax==float 0.9787 KL(float||.) 0.00092  (39s)
