@@ -57,10 +57,17 @@ def main(paths):
     Cv, Ct = np.load(f"{S}/Cv.npy"), np.load(f"{S}/Ct.npy")
     ids, pos = K.domain(); fr = Ct.sum(1); f = fr / fr.sum()
     tl, acts = K.teacher(m, ids, pos, keep=True); ce_t, _ = K.score(tl, Cv)
+    P = convert(m, f, 3, 4)
     for p in paths:
-        E = dict(np.load(p)); L = E["t1"].shape[1]; u = E["u"]
+        if p == "init":   # the converted network at step 0 (student.py's quantization of the conversion)
+            g = lambda x: np.abs(x).mean()
+            E = dict(A1=tern(P["A1"]), A2=tern(P["A2"]), C=tern(P["C"]), u=P["u"].astype(np.uint8),
+                     t1=np.floor(P["t1"] / g(P["A1"])).astype(np.int64), t2=np.floor(P["t2"] / g(P["A2"])).astype(np.int64),
+                     bias=np.round(P["bias"] / g(P["C"])).astype(np.int64), scale=P["s"] * g(P["C"]))
+        else:
+            E = dict(np.load(p))
+        L = E["t1"].shape[1]; u = E["u"]
         TB1, TB2 = teacher_bits(acts["h0"], f, L), teacher_bits(acts["h1"], f, L)
-        P = convert(m, f, 3, L)
         r1, r2 = layers(E, u)
         print(f"== {p}")
         for name, r, TB in (("layer 1", r1, TB1), ("layer 2", r2, TB2)):
@@ -69,6 +76,9 @@ def main(paths):
             idx = np.flatnonzero(live)
             same = ph[np.arange(len(idx)), idx]
             best = np.abs(ph).max(1)
+            lv = idx % L
+            per = " ".join(f"l{l}:{np.median(same[lv == l]):.2f}" for l in range(L) if (lv == l).any())
+            print(f"  {name}: median same-index phi per level {per}")
             print(f"  {name}: {live.sum()} live gates | phi with the SAME teacher bit: median {np.median(same):.3f}, "
                   f"share > .5: {(same > .5).mean():.3f} | best phi over ANY teacher bit: median {np.median(best):.3f}, "
                   f"share > .5: {(best > .5).mean():.3f}")
