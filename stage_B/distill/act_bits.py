@@ -29,13 +29,17 @@ FULL = ["nonorm", "fixres", "fixgain", "minifl", "qkv8", "head8"]
 NS = (8, 6, 4, 3, 2, 1); NBK = 1 << 20; P = np.uint64(1000003)
 
 
-def ctx_keys(X, n):
-    """hashed (last n bytes, position) key per token [B, T]"""
+USEPOS = [True]; MINC = [2]
+
+
+def ctx_keys(X, n, pos=None):
+    """hashed (last n bytes[, position]) key per token [B, T]"""
+    pos = USEPOS[0] if pos is None else pos
     B, T = X.shape; h = np.zeros((B, T), np.uint64)
     Xp = np.concatenate([np.full((B, n - 1), 256), X], 1).astype(np.uint64)
     for i in range(n):
         h = h * P + Xp[:, i:i + T] + np.uint64(1)
-    h = h * np.uint64(64) + np.arange(T, dtype=np.uint64)[None]
+    if pos: h = h * np.uint64(64) + np.arange(T, dtype=np.uint64)[None]
     return (h % np.uint64(NBK)).astype(np.int64)
 
 
@@ -45,14 +49,15 @@ class Tables:
 
     def add(self, name, X, logv):                        # logv [B, T, k]
         for n in NS:
-            key = ctx_keys(X, n).ravel(); v = logv.reshape(len(key), -1)
+            key = ctx_keys(X, n, pos=(n == 1) or USEPOS[0]).ravel(); v = logv.reshape(len(key), -1)
             s = self.sum.setdefault((name, n), np.zeros((NBK, v.shape[1]))); c = self.cnt.setdefault((name, n), np.zeros(NBK))
             np.add.at(s, key, v); np.add.at(c, key, 1)
 
     def get(self, name, X, maxn):
         B, T = X.shape; out = None; done = np.zeros(B * T, bool)
         for n in [n for n in NS if n <= maxn]:
-            key = ctx_keys(X, n).ravel(); c = self.cnt[(name, n)][key]; ok = (c >= (2 if n > 1 else 1)) & ~done
+            key = ctx_keys(X, n, pos=(n == 1) or USEPOS[0]).ravel(); c = self.cnt[(name, n)][key]
+            ok = (c >= (MINC[0] if n > 1 else 1)) & ~done
             val = self.sum[(name, n)][key] / np.maximum(c, 1)[:, None]
             if out is None: out = np.zeros_like(val)
             out[ok] = val[ok]; done |= ok
@@ -171,5 +176,45 @@ def main():
     json.dump(out, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", "act_bits.json"), "w"), indent=1)
 
 
+def followup():
+    """context tables without the position in the key (n >= 2), higher minimum counts, and one scale family at a time"""
+    import sys
+    USEPOS[0] = False
+    m = load(os.path.join(K.ROOT, "models/bitnet/bitnet_attn.bin"))
+    raw = open(f"{S}/wiki_11m.txt", "rb").read(); lo = len(raw) * 9 // 10; T = 64
+    b = np.frombuffer(raw[lo:], np.uint8).astype(np.int64); nw = (len(b) - 1) // T
+    X = b[:nw * T].reshape(nw, T); Y = b[1:nw * T + 1].reshape(nw, T)
+    Ct = np.load(f"{S}/Ct.npy"); uni = Ct.sum(0) + 1; UNI = float(-np.log(uni / uni.sum())[Y].mean())
+    tr = np.frombuffer(raw[:lo], np.uint8).astype(np.int64); rng = np.random.default_rng(3)
+    TX = tr[rng.integers(0, len(tr) - T, 24000)[:, None] + np.arange(T)]
+    tables = Tables(); col = Bits(m, FULL, collect=tables)
+    for i in range(0, len(TX), 256): col.forward(TX[i:i + 256])
+    out = {}
+
+    class Only(Bits):
+        only = None
+        def sc(self, name, val, layer0_exact):
+            if self.only and not name.startswith(self.only) and not layer0_exact:
+                return minifloat(val, self.mant)
+            return super().sc(name, val, layer0_exact)
+
+    def run(label, only=None, **kw):
+        sk = Only(m, FULL, tables=tables, **kw); sk.only = only; ce = hit = 0.0
+        for i in range(0, nw, 256):
+            lg = sk.forward(X[i:i + 256]); z = lg - lg.max(-1, keepdims=True)
+            lp = z - np.log(np.exp(z).sum(-1, keepdims=True)); yb = Y[i:i + 256]
+            ce += -np.take_along_axis(lp, yb[..., None], -1).sum(); hit += (lp.argmax(-1) == yb).sum()
+        n = Y.size; ce /= n; hit /= n; rec = dict(ce=ce, acc=hit, gain=(UNI - ce) / (UNI - 1.954176)); out[label] = rec
+        print(f"  {label:52s} CE {ce:.4f} acc {hit:.4f} gain {rec['gain']:.4f}", flush=True)
+    for mc in (2, 8, 32):
+        MINC[0] = mc
+        for n in (2, 4, 8): run(f"all scales, no position key, n<={n}, min count {mc}", lookup="all", maxn=n)
+    MINC[0] = 8
+    for fam in ("o", "in1", "qkv1", "fin"):
+        run(f"only '{fam}' scales from tables (n<=4, min 8)", only=fam, lookup="all", maxn=4)
+    json.dump(out, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "results", "act_bits_followup.json"), "w"), indent=1)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+    followup() if "followup" in sys.argv else main()

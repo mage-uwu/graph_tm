@@ -1,0 +1,114 @@
+{
+ "int skeleton, 8-bit activations, m=6 scales": {
+  "ce": 1.9568691017794604,
+  "acc": 0.4347623510462398,
+  "gain": 0.9977842948016005,
+  "argmax_agree": 1.0,
+  "lookup_miss": 0.0
+ },
+ "activations 6 bits (absmax)": {
+  "ce": 1.9593482390899655,
+  "acc": 0.43413072296026,
+  "gain": 0.9957446253511822,
+  "argmax_agree": 0.949181110667655,
+  "lookup_miss": 0.0
+ },
+ "activations 4 bits (absmax)": {
+  "ce": 2.0214998758811054,
+  "acc": 0.4159747562574833,
+  "gain": 0.9446103883247756,
+  "argmax_agree": 0.8236554963224814,
+  "lookup_miss": 0.0
+ },
+ "activations 3 bits (absmax)": {
+  "ce": 2.2771092391257373,
+  "acc": 0.349359819545014,
+  "gain": 0.7343119884573218,
+  "argmax_agree": 0.6149304763669536,
+  "lookup_miss": 0.0
+ },
+ "activations 2 bits (absmax)": {
+  "ce": 3.5312400378593183,
+  "acc": 0.16898946633217402,
+  "gain": -0.2975035008123294,
+  "argmax_agree": 0.2350075189577513,
+  "lookup_miss": 0.0
+ },
+ "activations 1 bits (absmax)": {
+  "ce": 2.93128882902633,
+  "acc": 0.2247277495866355,
+  "gain": 0.19609648947977784,
+  "argmax_agree": 0.3319379311819374,
+  "lookup_miss": 0.0
+ },
+ "activations 4 bits (shared non-uniform levels)": {
+  "ce": 2.092502049232766,
+  "acc": 0.39831500513142143,
+  "gain": 0.8861945178987951,
+  "argmax_agree": 0.7567732980785677,
+  "lookup_miss": 0.0
+ },
+ "activations 3 bits (shared non-uniform levels)": {
+  "ce": 2.3505532951579653,
+  "acc": 0.33571166400592967,
+  "gain": 0.673887099215016,
+  "argmax_agree": 0.5837036390330121,
+  "lookup_miss": 0.0
+ },
+ "activations 2 bits (shared non-uniform levels)": {
+  "ce": 2.7299676632950995,
+  "acc": 0.25712786504361707,
+  "gain": 0.36173016766475496,
+  "argmax_agree": 0.4021047736473003,
+  "lookup_miss": 0.0
+ },
+ "q/k/v 6 bits": {
+  "ce": 1.9580800455981433,
+  "acc": 0.43442738326016306,
+  "gain": 0.9967880106899161,
+  "argmax_agree": 0.9620969696105821,
+  "lookup_miss": 0.0
+ },
+ "q/k/v 4 bits": {
+  "ce": 1.988145198479448,
+  "acc": 0.4256362606191915,
+  "gain": 0.972052400607207,
+  "argmax_agree": 0.8745064570385996,
+  "lookup_miss": 0.0
+ },
+ "q/k/v 3 bits": {
+  "ce": 2.1313342050188098,
+  "acc": 0.3863497063686641,
+  "gain": 0.8542460003580152,
+  "argmax_agree": 0.719257796909744,
+  "lookup_miss": 0.0
+ },
+ "scales: layer-0 exact (byte, pos) tables": {
+  "ce": 1.9568813654454356,
+  "acc": 0.4347632419180113,
+  "gain": 0.9977742050721071,
+  "argmax_agree": 0.9994191516049946,
+  "lookup_miss": 0.0007625862363874794
+ },
+ "scales: all from tables (n-gram <= 2)": {
+  "ce": 1.9892700230498894,
+  "acc": 0.42842468926392613,
+  "gain": 0.9711269696906993,
+  "argmax_agree": 0.8991354980329551,
+  "lookup_miss": 0.0007454051379374944
+ },
+ "scales: all from tables (n-gram <= 4)": {
+  "ce": 2.010635350921906,
+  "acc": 0.42316587319687554,
+  "gain": 0.9535489975573841,
+  "argmax_agree": 0.8698855051599294,
+  "lookup_miss": 0.0005347775976802718
+ },
+ "scales: all from tables (n-gram <= 8)": {
+  "ce": 2.1313382291311527,
+  "acc": 0.39633192456810534,
+  "gain": 0.8542426895857654,
+  "argmax_agree": 0.7332827912081646,
+  "lookup_miss": 0.00035087621056747006
+ }
+}
