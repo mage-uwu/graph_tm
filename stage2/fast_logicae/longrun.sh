@@ -28,4 +28,5 @@ if [ -n "${LR_TOKEN:-}" ]; then
   log "serving /root/lr_exports on :8888 (token set)"
 fi
 log "threads $THREADS, $(python3 --version 2>&1), $(gcc --version | head -1)"
-(cd $R/stage2/fast_logicae && python3 longrun.py > $OUT/longrun.out 2>&1) || log "longrun.py exited non-zero: $(grep -v Warning $OUT/longrun.out | tail -3 | tr '\n' ' ')"
+S=${LR_SCRIPT:-longrun.py}  # ab.py: the 3k-step A/B follow-up
+(cd $R/stage2/fast_logicae && python3 $S > $OUT/longrun.out 2>&1) || log "$S exited non-zero: $(grep -v Warning $OUT/longrun.out | tail -3 | tr '\n' ' ')"
