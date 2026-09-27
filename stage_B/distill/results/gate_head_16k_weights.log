@@ -1,0 +1,6 @@
+{"args": {"k": 32, "widths": "8192", "wiring": "weights", "steps": 600, "batch": 16, "lr": 0.05, "train_windows": 4096, "eval_windows": 1024, "eval_every": 150, "seed": 0, "out": ""}, "gates": 16384, "adder_ops_est": 40960, "input_bits": 2568, "lgn": {"ce": 1.97811, "acc": 0.43015, "gain": 0.98379}, "linear": {"ce": 1.97873, "acc": 0.43048, "gain": 0.98328}, "teacher_ce": 1.9584836662561167}
+{"step": 0, "ce": 3.19382, "acc": 0.18735, "gain": -0.01996}
+{"step": 150, "kl": 0.7871, "ce": 2.78281, "acc": 0.26941, "gain": 0.31938, "sec": 435}
+{"step": 300, "kl": 0.8646, "ce": 2.77845, "acc": 0.26628, "gain": 0.32298, "sec": 867}
+{"step": 450, "kl": 0.7856, "ce": 2.79281, "acc": 0.26665, "gain": 0.31113, "sec": 1298}
+{"step": 600, "kl": 0.7955, "ce": 2.80418, "acc": 0.25443, "gain": 0.30174, "sec": 1729}
