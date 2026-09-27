@@ -102,6 +102,47 @@ class Field(torch.nn.Module):
         return [y[:, :, i].transpose(1, 2) for i in range(3)]              # [B, H, T, hd]
 
     # ---- the routing field
+    def build_rom(self):
+        """E[h, a, b, delta] = teacher layer-0 score for query byte a, key byte b, offset delta, averaged over positions"""
+        with torch.no_grad():
+            V = self.tok.shape[0]; T = self.T; x = self.tok[:, None, :] + self.pos[None]          # [256, T, d]
+            n = x / torch.sqrt((x * x).mean(-1, keepdim=True) + 1e-6) * self.g[0]
+            y = self.bitlin(n.reshape(-1, self.d), self.Wqkv[0]).reshape(V, T, 3, self.H, self.hd)
+            Q, Kk = y[:, :, 0].permute(2, 0, 1, 3), y[:, :, 1].permute(2, 0, 1, 3)              # [H, 256, T, hd]
+            rom = torch.zeros(self.H, V, V, self.a.window)
+            for dl in range(self.a.window):
+                e = torch.einsum("hatj,hbtj->hab", Q[:, :, dl:], Kk[:, :, :T - dl]) / (T - dl)
+                rom[..., dl] = e / self.hd ** .5
+        self.rom = torch.nn.Parameter(rom)
+
+    def field_rom(self, X, v):
+        """selection from the byte-pair x offset table; weights round(S exp(E - max)); same retrieval"""
+        a = self.a; B, T = X.shape; H, hd = self.H, self.hd
+        E = torch.full((B, H, T, a.window), float("-inf"))
+        for dl in range(a.window):
+            kb = torch.cat([X[:, :1].expand(B, dl), X[:, :T - dl]], 1)
+            e = self.rom[:, X, kb, dl].permute(1, 0, 2)                      # [B, H, T]
+            E[..., dl] = torch.where(torch.arange(T) >= dl, e, torch.full_like(e, float("-inf")))
+        wr = torch.exp(E - E.amax(-1, keepdim=True)) * a.rom_scale
+        lv = wr + (torch.floor(wr + .5) - wr).detach()                       # integer weights (STE)
+        return self.retrieve(lv, v)
+
+    def retrieve(self, lvls, v):
+        """quantized weighted mean over offsets; lvls [B, H, T, W]"""
+        a = self.a; B, H, T, W = lvls.shape; hd = self.hd
+        vt = v.permute(0, 2, 1, 3).reshape(B, T, self.d)
+        vb = (vt[..., None] > self.vth[None, None]).float()
+        num = torch.zeros(B, T, self.d, a.kbits)
+        for dl in range(W):
+            wd = lvls[..., dl].repeat_interleave(hd, 1).permute(0, 2, 1)[..., None]
+            vs = torch.cat([torch.zeros_like(vb[:, :dl]), vb[:, :T - dl]], 1)
+            num = num + wd * vs
+        wsum_d = lvls.sum(-1).repeat_interleave(hd, 1).permute(0, 2, 1)[..., None]
+        fr = num / wsum_d.clamp(min=1e-6); fq = torch.floor(fr * a.frac + .5) / a.frac
+        ob = fr + (fq - fr).detach()
+        steps = torch.diff(self.vmean, dim=-1)
+        return self.vmean[None, None, :, 0] + (ob * steps[None, None]).sum(-1), lvls
+
     def field(self, q, k, v, oracle=None):
         a = self.a; B, H, T, hd = q.shape; W, N = a.window, a.trees
         qbits = torch.stack([(q > 0).float(), (q.abs() > self.qmed[None, :, None]).float()], -1)   # [B, H, T, hd, 2]
@@ -153,7 +194,10 @@ class Field(torch.nn.Module):
             q, k, v = self.qkv(x, l)
             p = torch.softmax((q @ k.transpose(-1, -2) / hd ** .5).masked_fill(~self.causal, float("-inf")), -1)
             ot = (p @ v).transpose(1, 2).reshape(B, T, self.d)
-            if mode == "student" and l == self.a.layer:
+            if mode == "student" and l == self.a.layer and self.a.route == "rom":
+                o, stats = self.field_rom(X, v)
+                if local is not None: local.append(((o - ot.detach()) ** 2).mean() / (ot.detach() ** 2).mean())
+            elif mode == "student" and l == self.a.layer:
                 o, stats = self.field(q, k, v, p if self.a.oracle_scale else None)
                 if local is not None: local.append(((o - ot.detach()) ** 2).mean() / (ot.detach() ** 2).mean())
             else:
@@ -171,7 +215,8 @@ def main():
     ap.add_argument("--local", type=float, default=1.0); ap.add_argument("--eval-every", type=int, default=100)
     ap.add_argument("--eval-windows", type=int, default=1024); ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default=""); ap.add_argument("--oracle-scale", type=float, default=0)
-    ap.add_argument("--frac", type=int, default=4)
+    ap.add_argument("--frac", type=int, default=8); ap.add_argument("--route", default="trees")
+    ap.add_argument("--rom-scale", type=float, default=16); ap.add_argument("--load", default="")
     a = ap.parse_args(); torch.manual_seed(a.seed)
     m = load_attn(os.path.join(K.ROOT, "models/bitnet/bitnet_attn.bin")); T = m["T"]
     raw = open(f"{S}/wiki_11m.txt", "rb").read(); ntr = len(raw) * 9 // 10
@@ -182,6 +227,8 @@ def main():
     b = np.frombuffer(raw[:ntr], np.uint8).astype(np.int64); rng = np.random.default_rng(a.seed)
     fitX = b[rng.integers(0, len(b) - T, 256)[:, None] + np.arange(T)]
     net = Field(m, a, fitX)
+    if a.route == "rom": net.build_rom()
+    if a.load: net.load_state_dict(torch.load(a.load)["state"])
 
     def evaluate(mode):
         ce = hit = 0.0; lv = []
@@ -196,7 +243,9 @@ def main():
     ce_t = evaluate("teacher")["ce"]; gain = lambda ce: (UNI - ce) / (UNI - ce_t)
     r0 = evaluate("student"); r0["gain"] = gain(r0["ce"])
     print(json.dumps(dict(args=vars(a), teacher_ce=ce_t, unigram=UNI, step0=r0)), flush=True)
-    opt = torch.optim.Adam([dict(params=[net.g1, net.g2, net.g3], lr=a.lr), dict(params=[net.th], lr=a.lr * 5)])
+    groups = [dict(params=[net.g1, net.g2, net.g3], lr=a.lr), dict(params=[net.th], lr=a.lr * 5)]
+    if a.route == "rom": groups = [dict(params=[net.rom], lr=a.lr)]
+    opt = torch.optim.Adam(groups)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps, eta_min=0); t0 = time.time()
     for step in range(1, a.steps + 1):
         st = rng.integers(0, len(b) - T - 1, a.batch); X = torch.tensor(b[st[:, None] + np.arange(T)])
