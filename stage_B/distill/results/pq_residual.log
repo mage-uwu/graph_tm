@@ -1,0 +1,6 @@
+{"teacher_ce": 1.9584848880767822, "teacher_acc": 0.4356842041015625, "fit_tokens": 60000, "setup_sec": 1}
+{"M": 1, "codes": 256, "bits_per_token": 8, "rel_mse": 0.1474, "strict": {"ce": 2.458, "acc": 0.309, "gain": 0.6013}, "attn_only": {"ce": 2.3111, "acc": 0.3428, "gain": 0.7186}, "sec": 1}
+{"M": 2, "codes": 256, "bits_per_token": 16, "rel_mse": 0.1425, "strict": {"ce": 2.3603, "acc": 0.3294, "gain": 0.6794}, "attn_only": {"ce": 2.2496, "acc": 0.3565, "gain": 0.7677}, "sec": 2}
+{"M": 4, "codes": 256, "bits_per_token": 32, "rel_mse": 0.1356, "strict": {"ce": 2.2909, "acc": 0.3421, "gain": 0.7347}, "attn_only": {"ce": 2.1959, "acc": 0.3686, "gain": 0.8105}, "sec": 3}
+{"M": 8, "codes": 256, "bits_per_token": 64, "rel_mse": 0.1221, "strict": {"ce": 2.1893, "acc": 0.365, "gain": 0.8158}, "attn_only": {"ce": 2.1174, "acc": 0.3863, "gain": 0.8732}, "sec": 5}
+{"M": 16, "codes": 256, "bits_per_token": 128, "rel_mse": 0.0911, "strict": {"ce": 2.0809, "acc": 0.397, "gain": 0.9023}, "attn_only": {"ce": 2.0401, "acc": 0.4085, "gain": 0.9349}, "sec": 10}
