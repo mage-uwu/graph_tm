@@ -1,0 +1,67 @@
+{
+ "all scales, no position key, n<=2, min count 2": {
+  "ce": 2.0326550466813047,
+  "acc": 0.41896986715320145,
+  "gain": 0.935432655006435
+ },
+ "all scales, no position key, n<=4, min count 2": {
+  "ce": 2.012448737431796,
+  "acc": 0.4222447117851645,
+  "gain": 0.952057063629259
+ },
+ "all scales, no position key, n<=8, min count 2": {
+  "ce": 2.0646200446053005,
+  "acc": 0.411025963566908,
+  "gain": 0.9091339786596327
+ },
+ "all scales, no position key, n<=2, min count 8": {
+  "ce": 2.0326460182440846,
+  "acc": 0.41896274017902957,
+  "gain": 0.9354400830046765
+ },
+ "all scales, no position key, n<=4, min count 8": {
+  "ce": 2.013150586987572,
+  "acc": 0.42217255117167457,
+  "gain": 0.9514796284498361
+ },
+ "all scales, no position key, n<=8, min count 8": {
+  "ce": 2.0250529415275036,
+  "acc": 0.4197128542106163,
+  "gain": 0.9416871619977867
+ },
+ "all scales, no position key, n<=2, min count 32": {
+  "ce": 2.0328676796087923,
+  "acc": 0.41895917669194366,
+  "gain": 0.9352577147622978
+ },
+ "all scales, no position key, n<=4, min count 32": {
+  "ce": 2.0159898297869803,
+  "acc": 0.42189103569188663,
+  "gain": 0.9491436881307042
+ },
+ "all scales, no position key, n<=8, min count 32": {
+  "ce": 2.0178784098928846,
+  "acc": 0.42167009949255946,
+  "gain": 0.9475898899080895
+ },
+ "only 'o' scales from tables (n<=4, min 8)": {
+  "ce": 1.9689340552904844,
+  "acc": 0.4310830506300245,
+  "gain": 0.9878580527201816
+ },
+ "only 'in1' scales from tables (n<=4, min 8)": {
+  "ce": 1.976803939738954,
+  "acc": 0.42859039141342153,
+  "gain": 0.9813832347180296
+ },
+ "only 'qkv1' scales from tables (n<=4, min 8)": {
+  "ce": 1.9863536868336469,
+  "acc": 0.42608080563316036,
+  "gain": 0.9735263373506561
+ },
+ "only 'fin' scales from tables (n<=4, min 8)": {
+  "ce": 1.9627392254810705,
+  "acc": 0.4347632419180113,
+  "gain": 0.9929547470659364
+ }
+}

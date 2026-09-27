@@ -1,0 +1,13 @@
+  all scales, no position key, n<=2, min count 2       CE 2.0327 acc 0.4190 gain 0.9354
+  all scales, no position key, n<=4, min count 2       CE 2.0124 acc 0.4222 gain 0.9521
+  all scales, no position key, n<=8, min count 2       CE 2.0646 acc 0.4110 gain 0.9091
+  all scales, no position key, n<=2, min count 8       CE 2.0326 acc 0.4190 gain 0.9354
+  all scales, no position key, n<=4, min count 8       CE 2.0132 acc 0.4222 gain 0.9515
+  all scales, no position key, n<=8, min count 8       CE 2.0251 acc 0.4197 gain 0.9417
+  all scales, no position key, n<=2, min count 32      CE 2.0329 acc 0.4190 gain 0.9353
+  all scales, no position key, n<=4, min count 32      CE 2.0160 acc 0.4219 gain 0.9491
+  all scales, no position key, n<=8, min count 32      CE 2.0179 acc 0.4217 gain 0.9476
+  only 'o' scales from tables (n<=4, min 8)            CE 1.9689 acc 0.4311 gain 0.9879
+  only 'in1' scales from tables (n<=4, min 8)          CE 1.9768 acc 0.4286 gain 0.9814
+  only 'qkv1' scales from tables (n<=4, min 8)         CE 1.9864 acc 0.4261 gain 0.9735
+  only 'fin' scales from tables (n<=4, min 8)          CE 1.9627 acc 0.4348 gain 0.9930
