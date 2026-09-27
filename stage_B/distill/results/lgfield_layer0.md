@@ -14,3 +14,8 @@ routing code per token and head (256 k-means codes of the teacher's layer-1 q an
 assignment                                         untrained   pair table fine-tuned (300 steps)
 codes from hashed byte n-grams (n <= 8, backoff)     0.613       0.648
 codes from the true q / k (VQ bound)                 0.854       0.880
+BLT hash n-gram embeddings (lg1b.py: byte emb + sum over n = 3..8 of learned tables, 65,536 buckets per n, q and k
+sides; stage 1 regress teacher q/k, stage 2 routing loss). Layer 0 exact; first 1024 validation windows.
+  lr .05, 1500 + 500 steps                    0.894
+  lr .01, 1000 + 2000 steps                   0.980 (0.981 best at step 2000)
+  lr .01, routing loss only (no stage 1)      0.681 (stuck: zero-initialised tables give flat scores)
