@@ -69,11 +69,12 @@ class Field(torch.nn.Module):
         self.g3 = torch.nn.Parameter(passa.repeat(H, W, N, 1, 1).clone())
         L = a.levels
         self.th = torch.nn.Parameter((torch.arange(1, L + 1).float() * N / (L + 1))[None, None].repeat(H, W, 1).clone())
+        self.beta = torch.nn.Parameter(torch.full((H,), 1.0))
         idx = torch.arange(self.T); rel = idx[:, None] - idx[None]
         self.register_buffer("causal", rel >= 0)
         # value thermometers from the teacher's v on the fit windows (per head dim)
         with torch.no_grad():
-            v = self.qkv(self.embed(torch.tensor(fitX)), a.layer)[2]          # [B, H, T, hd]
+            v = self.qkv(self.layer_input(torch.tensor(fitX), a.layer), a.layer)[2]   # [B, H, T, hd]
             v = v.permute(0, 2, 1, 3).reshape(-1, self.d)
             qs = torch.arange(1, a.kbits + 1).float() / (a.kbits + 1)
             th = torch.quantile(v[::3], qs, dim=0).T.contiguous()            # [d, K]
@@ -82,7 +83,7 @@ class Field(torch.nn.Module):
         self.register_buffer("vth", th); self.register_buffer("vmean", means)
         # q / k bit thresholds: sign, and |x| above its median (the top-magnitude bit)
         with torch.no_grad():
-            q, k, _ = self.qkv(self.embed(torch.tensor(fitX)), a.layer)
+            q, k, _ = self.qkv(self.layer_input(torch.tensor(fitX), a.layer), a.layer)
             self.register_buffer("qmed", q.abs().median(dim=2).values.median(dim=0).values)   # [H, hd]
             self.register_buffer("kmed", k.abs().median(dim=2).values.median(dim=0).values)
 
@@ -91,6 +92,15 @@ class Field(torch.nn.Module):
     def bitlin(x, W):
         s = 127 / x.abs().amax(-1, keepdim=True).clamp(min=1e-5)
         return (x + (torch.round(x * s) - x * s).detach() / s) @ W
+
+    def layer_input(self, X, layer):
+        """residual stream entering `layer` with the teacher's attention in the layers before it"""
+        x = self.embed(X); B, T = X.shape
+        for l in range(layer):
+            q, k, v = self.qkv(x, l)
+            p = torch.softmax((q @ k.transpose(-1, -2) / self.hd ** .5).masked_fill(~self.causal, float("-inf")), -1)
+            x = x + self.bitlin((p @ v).transpose(1, 2).reshape(B, T, self.d), self.Wo[l])
+        return x
 
     def embed(self, X):
         return self.tok[X] + self.pos[None, :X.shape[1]]
@@ -143,8 +153,8 @@ class Field(torch.nn.Module):
         steps = torch.diff(self.vmean, dim=-1)
         return self.vmean[None, None, :, 0] + (ob * steps[None, None]).sum(-1), lvls
 
-    def field(self, q, k, v, oracle=None):
-        a = self.a; B, H, T, hd = q.shape; W, N = a.window, a.trees
+    def field(self, q, k, v, oracle=None, p_teacher=None):
+        a = self.a; B, H, T, hd = q.shape; W, N = a.window, a.trees; scores = []
         qbits = torch.stack([(q > 0).float(), (q.abs() > self.qmed[None, :, None]).float()], -1)   # [B, H, T, hd, 2]
         kbits = torch.stack([(k > 0).float(), (k.abs() > self.kmed[None, :, None]).float()], -1)
         vt = v.permute(0, 2, 1, 3).reshape(B, T, self.d)
@@ -163,6 +173,7 @@ class Field(torch.nn.Module):
             l2 = gate(l1[:, :, :, 0::2], l1[:, :, :, 1::2], self.g2[:, dl][None, ..., None, :].expand(B, H, N, 2, T, 4))
             l3 = gate(l2[:, :, :, 0], l2[:, :, :, 1], self.g3[:, dl][None, :, :, 0, None, :].expand(B, H, N, T, 4))
             score = l3.sum(2)                                                 # [B, H, T] popcount of N trees
+            scores.append(score)
             th = torch.sort(self.th[:, dl], -1).values                        # [H, L]
             lvl = hard(score[..., None] - th[None, :, None, :] + .5, .5).sum(-1)     # [B, H, T]
             if dl == 0: lvl = lvl + 1
@@ -176,6 +187,17 @@ class Field(torch.nn.Module):
             wd = lvl.repeat_interleave(hd, 1).permute(0, 2, 1)[..., None]    # [B, T, d, 1]
             vs = torch.cat([torch.zeros_like(vb[:, :dl]), vb[:, :T - dl]], 1)
             num = num + wd * vs
+        self.route_loss = None
+        if p_teacher is not None:                                            # distill attention's routing
+            Sc = torch.stack(scores, -1)                                      # [B, H, T, W]
+            valid = torch.arange(T)[:, None] >= torch.arange(W)[None]          # [T, W]
+            pw = torch.stack([torch.cat([torch.zeros(B, H, dl), torch.diagonal(p_teacher, -dl, 2, 3)], -1)
+                              for dl in range(W)], -1)
+            pw = pw / pw.sum(-1, keepdim=True).clamp(min=1e-9)
+            lg = (self.beta[None, :, None, None] * Sc).masked_fill(~valid, float("-inf"))
+            lq = torch.log_softmax(lg, -1)
+            self.route_loss = -(pw * torch.where(valid, lq, torch.zeros_like(lq))).sum(-1).mean() \
+                + (pw * torch.log(pw.clamp(min=1e-12))).sum(-1).mean()
         wsum = torch.stack(wmaps, 0).sum(0)                                   # [B, H, T]
         wsum_d = wsum.repeat_interleave(hd, 1).permute(0, 2, 1)[..., None]   # [B, T, d, 1]
         if a.frac <= 1:
@@ -198,7 +220,7 @@ class Field(torch.nn.Module):
                 o, stats = self.field_rom(X, v)
                 if local is not None: local.append(((o - ot.detach()) ** 2).mean() / (ot.detach() ** 2).mean())
             elif mode == "student" and l == self.a.layer:
-                o, stats = self.field(q, k, v, p if self.a.oracle_scale else None)
+                o, stats = self.field(q, k, v, p if self.a.oracle_scale else None, p_teacher=p.detach() if self.a.route_w else None)
                 if local is not None: local.append(((o - ot.detach()) ** 2).mean() / (ot.detach() ** 2).mean())
             else:
                 o = ot
@@ -217,6 +239,7 @@ def main():
     ap.add_argument("--out", default=""); ap.add_argument("--oracle-scale", type=float, default=0)
     ap.add_argument("--frac", type=int, default=8); ap.add_argument("--route", default="trees")
     ap.add_argument("--rom-scale", type=float, default=16); ap.add_argument("--load", default="")
+    ap.add_argument("--route-w", type=float, default=0.0)
     a = ap.parse_args(); torch.manual_seed(a.seed)
     m = load_attn(os.path.join(K.ROOT, "models/bitnet/bitnet_attn.bin")); T = m["T"]
     raw = open(f"{S}/wiki_11m.txt", "rb").read(); ntr = len(raw) * 9 // 10
@@ -243,7 +266,7 @@ def main():
     ce_t = evaluate("teacher")["ce"]; gain = lambda ce: (UNI - ce) / (UNI - ce_t)
     r0 = evaluate("student"); r0["gain"] = gain(r0["ce"])
     print(json.dumps(dict(args=vars(a), teacher_ce=ce_t, unigram=UNI, step0=r0)), flush=True)
-    groups = [dict(params=[net.g1, net.g2, net.g3], lr=a.lr), dict(params=[net.th], lr=a.lr * 5)]
+    groups = [dict(params=[net.g1, net.g2, net.g3], lr=a.lr), dict(params=[net.th, net.beta], lr=a.lr * 5)]
     if a.route == "rom": groups = [dict(params=[net.rom], lr=a.lr)]
     opt = torch.optim.Adam(groups)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps, eta_min=0); t0 = time.time()
@@ -253,9 +276,11 @@ def main():
             tp = torch.softmax(net(X, "teacher")[0], -1)
         loc = []; lg, _ = net(X, "student", loc); lp = torch.log_softmax(lg, -1)
         kl = (tp * (torch.log(tp + 1e-12) - lp)).sum(-1).mean(); loss = kl + a.local * loc[0]
+        if a.route_w and net.route_loss is not None: loss = loss + a.route_w * net.route_loss
         opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if step % a.eval_every == 0 or step == a.steps:
             r = evaluate("student"); r.update(step=step, kl=round(kl.item(), 4), local=round(loc[0].item(), 4),
+                                             route=round(net.route_loss.item(), 4) if net.route_loss is not None else None,
                                              gain=round(gain(r["ce"]), 4), sec=round(time.time() - t0, 1))
             print(json.dumps(r), flush=True)
     if a.out: torch.save(dict(state=net.state_dict(), args=vars(a)), a.out)
