@@ -8,3 +8,4 @@ results/act_bits.log
 results/act_bits_followup.log
 results/lgn_train.log
 lgn
+results/lgf*.log
