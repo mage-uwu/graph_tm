@@ -11,3 +11,4 @@ lgn
 results/lgf*.log
 results/lg1b.log
 results/lg1b_*.log
+results/entropy_attn.log
