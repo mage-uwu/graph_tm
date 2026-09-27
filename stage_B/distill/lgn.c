@@ -9,6 +9,7 @@
  *   ./lgn bench  MODEL.bin TEXT            ns per token: 1 thread and all threads (full 64-token windows)
  *   options: --mm popcount|int (ternary matmul as bit-plane popcounts or as int8 dot products; same integers)
  *            --table 0|1       (layer 0 from the exact (byte, position) table; default 1)
+ *            --batch 0|1       (VNNI matmuls for all 64 tokens of a window at once, register-blocked; default 1)
  */
 #define _POSIX_C_SOURCE 200809L
 #include <math.h>
@@ -134,7 +135,7 @@ static Model *load(const char *path) {
 }
 
 /* ---------------- ternary matmul: int dot products or bit-plane popcounts (identical integers) ---------------- */
-static int MM_POPCOUNT = 0, MM_VNNI = 1;
+static int MM_POPCOUNT = 0, MM_VNNI = 1, MM_BATCH = 1;
 static void mm_vnni(const int8_t *xq, int n_out, const int8_t *pk, const int32_t *cs, i64 *z) {
 #ifdef __AVX512VNNI__
     uint8_t xu[D]; for (int j = 0; j < D; j++) xu[j] = (uint8_t)(xq[j] + 32);
@@ -178,18 +179,56 @@ static void mm(const int8_t *xq, int n_out, const int8_t *WT, uint64_t *const Wp
     }
 }
 
+/* batched VNNI kernels: nt tokens x n_out columns, register-blocked 4 tokens x 4 column blocks of 16 (16 independent
+ * accumulators instead of one dependent chain per column block); same integers as mm_vnni / the int16 head loop */
+#ifdef __AVX512VNNI__
+static void mmb_vnni(const uint8_t *xu, int nt, int n_out, const int8_t *pk, const int32_t *cs, int32_t *z) {
+    for (int t0 = 0; t0 < nt; t0 += 4) for (int cb0 = 0; cb0 < n_out / 16; cb0 += 4) {
+        __m512i acc[4][4];
+        for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) acc[r][c] = _mm512_setzero_si512();
+        for (int j4 = 0; j4 < D / 4; j4++) {
+            __m512i w[4];
+            for (int c = 0; c < 4; c++) w[c] = _mm512_loadu_si512(pk + ((size_t)(cb0 + c) * (D / 4) + j4) * 64);
+            for (int r = 0; r < 4; r++) {
+                int32_t b; memcpy(&b, xu + (size_t)(t0 + r) * D + 4 * j4, 4); __m512i bb = _mm512_set1_epi32(b);
+                for (int c = 0; c < 4; c++) acc[r][c] = _mm512_dpbusd_epi32(acc[r][c], bb, w[c]);
+            }
+        }
+        for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) {
+            __m512i corr = _mm512_slli_epi32(_mm512_loadu_si512(cs + (cb0 + c) * 16), 5);
+            _mm512_storeu_si512(z + (size_t)(t0 + r) * n_out + (cb0 + c) * 16, _mm512_sub_epi32(acc[r][c], corr));
+        }
+    }
+}
+static void mmb_head(const int16_t *y16, int nt, const int16_t *hv, int32_t *z) {
+    for (int t0 = 0; t0 < nt; t0 += 4) for (int cb0 = 0; cb0 < 16; cb0 += 4) {
+        __m512i acc[4][4];
+        for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) acc[r][c] = _mm512_setzero_si512();
+        for (int j2 = 0; j2 < D / 2; j2++) {
+            __m512i w[4];
+            for (int c = 0; c < 4; c++) w[c] = _mm512_loadu_si512(hv + ((size_t)(cb0 + c) * (D / 2) + j2) * 32);
+            for (int r = 0; r < 4; r++) {
+                int32_t b; memcpy(&b, y16 + (size_t)(t0 + r) * D + 2 * j2, 4); __m512i bb = _mm512_set1_epi32(b);
+                for (int c = 0; c < 4; c++) acc[r][c] = _mm512_dpwssd_epi32(acc[r][c], bb, w[c]);
+            }
+        }
+        for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) _mm512_storeu_si512(z + (size_t)(t0 + r) * 256 + (cb0 + c) * 16, acc[r][c]);
+    }
+}
+#endif
+
 /* ---------------- per-token layer inputs: q6/k6/v6 + scales (tabulated for layer 0) ---------------- */
 typedef struct {
     int8_t qkv[3][NH][HD]; uint32_t mag[3][NH][5], neg[3][NH];
     i64 mc; i64 ex[3][NH];                             /* scale mantissa (shared), exponents per part / head */
 } Tok;
 
-static void tok_inputs(const Model *M, int l, const i64 *x, Tok *o) {
-    i64 y[D], z[3 * D]; int8_t xq[D];
-    for (int j = 0; j < D; j++) y[j] = x[j] * M->gi[l][j];
-    int k1 = q6(y, D, xq);
-    if (MM_VNNI && !MM_POPCOUNT) mm_vnni(xq, 3 * D, M->Wqv[l], M->Wqs[l], z); else mm(xq, 3 * D, M->WqT[l], M->Wqp[l], z);
-    i64 S = 0; for (int j = 0; j < D; j++) S += x[j] * x[j];
+static int tok_pre(const Model *M, int l, const i64 *x, int8_t *xq, i64 *S_) {
+    i64 y[D], S = 0;
+    for (int j = 0; j < D; j++) { y[j] = x[j] * M->gi[l][j]; S += x[j] * x[j]; }
+    *S_ = S; return q6(y, D, xq);
+}
+static void tok_post(const Model *M, int l, const i64 *z, int k1, i64 S, Tok *o) {
     i64 rm_, re_, mr, er, mc, ec;
     rsqrt_mf(M, S, &rm_, &re_); mf_mul(M->sqd[0], M->sqd[1], rm_, re_, &mr, &er); mf_mul(M->gq[l][0], M->gq[l][1], mr, er, &mc, &ec);
     o->mc = mc;
@@ -204,6 +243,12 @@ static void tok_inputs(const Model *M, int l, const i64 *x, Tok *o) {
         }
         o->neg[p][h] = neg; memcpy(o->mag[p][h], mag, sizeof mag);
     }
+}
+static void tok_inputs(const Model *M, int l, const i64 *x, Tok *o) {
+    i64 z[3 * D], S; int8_t xq[D];
+    int k1 = tok_pre(M, l, x, xq, &S);
+    if (MM_VNNI && !MM_POPCOUNT) mm_vnni(xq, 3 * D, M->Wqv[l], M->Wqs[l], z); else mm(xq, 3 * D, M->WqT[l], M->Wqp[l], z);
+    tok_post(M, l, z, k1, S, o);
 }
 
 /* gate-field match: sum over plane pairs of w_ab x (popcount of corner mask on same-sign dims - on opposite-sign dims) */
@@ -224,12 +269,24 @@ static inline i64 match(const Model *M, int l, int h, const Tok *a, const Tok *b
 /* one window of T bytes -> integer logits [T][256] (and the final 1/rms minifloats for CE) */
 static void forward(const Model *M, const Tok *tab0, const uint8_t *X, i64 *logits, i64 *rs_m, i64 *rs_e) {
     i64 x[T][D]; Tok tk[T]; int khv[T];
+#ifdef __AVX512VNNI__
+    const int BATCH = MM_BATCH && MM_VNNI && !MM_POPCOUNT;
+#else
+    const int BATCH = 0;
+#endif
+    uint8_t xu[T][D]; int32_t zb[T][3 * D]; int osh[T];     /* batched matmul staging (VNNI path) */
+    (void)xu; (void)zb; (void)osh;
     for (int t = 0; t < T; t++) for (int j = 0; j < D; j++) x[t][j] = M->tok[(size_t)X[t] * D + j] + M->pos[(size_t)t * D + j];
     for (int l = 0; l < M->L; l++) {
-        for (int t = 0; t < T; t++) {
-            if (l == 0 && tab0) tk[t] = tab0[(size_t)X[t] * T + t];
-            else tok_inputs(M, l, x[t], &tk[t]);
-        }
+        if (l == 0 && tab0) { for (int t = 0; t < T; t++) tk[t] = tab0[(size_t)X[t] * T + t]; }
+        else if (BATCH) {
+#ifdef __AVX512VNNI__
+            int8_t xq[D]; int k1[T]; i64 S[T], z[3 * D];
+            for (int t = 0; t < T; t++) { k1[t] = tok_pre(M, l, x[t], xq, &S[t]); for (int j = 0; j < D; j++) xu[t][j] = (uint8_t)(xq[j] + 32); }
+            mmb_vnni(&xu[0][0], T, 3 * D, M->Wqv[l], M->Wqs[l], &zb[0][0]);
+            for (int t = 0; t < T; t++) { for (int c = 0; c < 3 * D; c++) z[c] = zb[t][c]; tok_post(M, l, z, k1[t], S[t], &tk[t]); }
+#endif
+        } else for (int t = 0; t < T; t++) tok_inputs(M, l, x[t], &tk[t]);
         for (int t = 0; t < T; t++) {
             int s0 = t - M->W + 1 < 0 ? 0 : t - M->W + 1, n = t - s0 + 1;
             i64 o[NH][HD], evmin_h[NH];
@@ -270,11 +327,34 @@ static void forward(const Model *M, const Tok *tab0, const uint8_t *X, i64 *logi
             i64 of[D]; int8_t oq[D]; i64 zo[D];
             for (int h = 0; h < NH; h++) for (int j = 0; j < HD; j++) of[h * HD + j] = o[h][j] * ((i64)1 << (evmin_h[h] - eo));
             int k3 = q6(of, D, oq);
-            if (MM_VNNI && !MM_POPCOUNT) mm_vnni(oq, D, M->Wov[l], M->Wos[l], zo); else mm(oq, D, M->WoT[l], M->Woq[l], zo);
             int sh = (int)(M->go[l][1] + eo + k3);
+            if (BATCH) { osh[t] = sh; for (int j = 0; j < D; j++) xu[t][j] = (uint8_t)(oq[j] + 32); continue; }  /* W_o after the loop */
+            if (MM_VNNI && !MM_POPCOUNT) mm_vnni(oq, D, M->Wov[l], M->Wos[l], zo); else mm(oq, D, M->WoT[l], M->Woq[l], zo);
             for (int c = 0; c < D; c++) x[t][c] += shift_round(zo[c] * M->go[l][0], sh);   /* updated after all heads */
         }
+#ifdef __AVX512VNNI__
+        if (BATCH) {                                   /* x is not read by this layer's attention: W_o for all tokens at once */
+            mmb_vnni(&xu[0][0], T, D, M->Wov[l], M->Wos[l], &zb[0][0]);
+            const int32_t *zo_b = &zb[0][0];                /* T x D */
+            for (int t = 0; t < T; t++) for (int c = 0; c < D; c++) x[t][c] += shift_round((i64)zo_b[(size_t)t * D + c] * M->go[l][0], osh[t]);
+        }
+#endif
     }
+#ifdef __AVX512VNNI__
+    if (BATCH) {
+        int16_t y16[T][D]; int32_t *zh = &zb[0][0];   /* T x 256 int32 fits in zb (T x 384) */
+        for (int t = 0; t < T; t++) {
+            i64 yf[D], S = 0;
+            for (int j = 0; j < D; j++) { yf[j] = x[t][j] * M->gfi[j]; S += x[t][j] * x[t][j]; }
+            khv[t] = q16(yf, D, y16[t]);
+            if (rs_m) { i64 a, b; rsqrt_mf(M, S, &a, &b); mf_mul(M->sqd[0], M->sqd[1], a, b, &rs_m[t], &rs_e[t]); rs_e[t] += khv[t]; }
+        }
+        mmb_head(&y16[0][0], T, M->headv, zh);
+        for (int t = 0; t < T; t++) for (int v = 0; v < 256; v++)
+            logits[(size_t)t * 256 + v] = (i64)zh[(size_t)t * 256 + v] * M->mh_m[v] * ((i64)1 << (M->mh_e[v] - M->emin_h));
+        return;
+    }
+#endif
     for (int t = 0; t < T; t++) {
         i64 yf[D], S = 0;
         for (int j = 0; j < D; j++) { yf[j] = x[t][j] * M->gfi[j]; S += x[t][j] * x[t][j]; }
@@ -326,6 +406,7 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[i], "--mm") && i + 1 < argc) MM_POPCOUNT = !strcmp(argv[++i], "popcount");
         else if (!strcmp(argv[i], "--table") && i + 1 < argc) use_table = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--vnni") && i + 1 < argc) MM_VNNI = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--batch") && i + 1 < argc) MM_BATCH = atoi(argv[++i]);
     }
     Model *M = load(argv[2]);
     Tok *tab0 = use_table ? layer0_table(M) : NULL;
@@ -344,11 +425,13 @@ int main(int argc, char **argv) {
     if (argc < 4) die("eval / bench need TEXT");
     long len; uint8_t *txt = read_all(argv[3], &len); long lo = len * 9 / 10, nw = (len - lo - 1) / T;
     if (!strcmp(argv[1], "eval")) {
-        double ce = 0; long hit = 0;
-        #pragma omp parallel for schedule(dynamic, 16) reduction(+:ce, hit)
+        double ce = 0; long hit = 0; uint64_t hsh = 0;          /* order-free fingerprint of every integer logit */
+        #pragma omp parallel for schedule(dynamic, 16) reduction(+:ce, hit, hsh)
         for (long w = 0; w < nw; w++) {
             i64 lg[T * 256], rm[T], re[T]; const uint8_t *X = txt + lo + w * T;
             forward(M, tab0, X, lg, rm, re);
+            for (int i = 0; i < T * 256; i++) { uint64_t z = (uint64_t)lg[i] + 0x9e3779b97f4a7c15ull * (uint64_t)(w * T * 256 + i + 1);
+                z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull; z = (z ^ (z >> 27)) * 0x94d049bb133111ebull; hsh += z ^ (z >> 31); }
             for (int t = 0; t < T; t++) {
                 int y = X[t + 1], am = 0; double sc = ldexp((double)rm[t], (int)(re[t] + M->emin_h - M->G)), mx = -1e300, z = 0;
                 for (int v = 0; v < 256; v++) { if (lg[t * 256 + v] > lg[t * 256 + am]) am = v; double r = lg[t * 256 + v] * sc; if (r > mx) mx = r; }
@@ -357,7 +440,7 @@ int main(int argc, char **argv) {
             }
         }
         long n = nw * T;
-        printf("{\"bytes\":%ld,\"ce\":%.6f,\"acc\":%.6f}\n", n, ce / n, (double)hit / n);
+        printf("{\"bytes\":%ld,\"ce\":%.6f,\"acc\":%.6f,\"logit_hash\":\"%016llx\"}\n", n, ce / n, (double)hit / n, (unsigned long long)hsh);
         return 0;
     }
     if (!strcmp(argv[1], "bench")) {
