@@ -1,0 +1,54 @@
+entropy model on 6,000,000 training bytes (3s)
+teacher (scoring half): CE 1.9514 acc 0.4361; unigram 3.1703
+
+== average patch 3.0 bytes: theta 2.81 bits, measured 3.00 bytes/patch; boundaries at a space 0.05, after a space 0.55
+  L0H0: mass on current patch 0.667, previous 0.255; on patch starts 0.323 (random boundaries 0.350)
+  L0H1: mass on current patch 0.854, previous 0.109; on patch starts 0.373 (random boundaries 0.346)
+  L0H2: mass on current patch 0.734, previous 0.214; on patch starts 0.380 (random boundaries 0.350)
+  L0H3: mass on current patch 0.604, previous 0.307; on patch starts 0.346 (random boundaries 0.355)
+  L1H0: mass on current patch 0.363, previous 0.333; on patch starts 0.289 (random boundaries 0.357)
+  L1H1: mass on current patch 0.478, previous 0.240; on patch starts 0.236 (random boundaries 0.353)
+  L1H2: mass on current patch 0.532, previous 0.268; on patch starts 0.327 (random boundaries 0.353)
+  L1H3: mass on current patch 0.639, previous 0.228; on patch starts 0.475 (random boundaries 0.351)
+  fixed pattern in patch coords, layer 0, entropy patches  : gain kept 0.418 (acc 0.2645)
+  fixed pattern in patch coords, layer 0, random boundaries: gain kept 0.443 (acc 0.2696)
+  fixed pattern in patch coords, layer 1, entropy patches  : gain kept 0.756 (acc 0.3492)
+  fixed pattern in patch coords, layer 1, random boundaries: gain kept 0.746 (acc 0.3429)
+  fixed pattern in patch coords, both   , entropy patches  : gain kept 0.437 (acc 0.2713)
+  fixed pattern in patch coords, both   , random boundaries: gain kept 0.441 (acc 0.2681)
+
+== average patch 4.5 bytes: theta 3.44 bits, measured 4.51 bytes/patch; boundaries at a space 0.02, after a space 0.81
+  L0H0: mass on current patch 0.740, previous 0.227; on patch starts 0.224 (random boundaries 0.243)
+  L0H1: mass on current patch 0.890, previous 0.094; on patch starts 0.262 (random boundaries 0.239)
+  L0H2: mass on current patch 0.812, previous 0.171; on patch starts 0.281 (random boundaries 0.243)
+  L0H3: mass on current patch 0.691, previous 0.282; on patch starts 0.248 (random boundaries 0.249)
+  L1H0: mass on current patch 0.446, previous 0.368; on patch starts 0.204 (random boundaries 0.252)
+  L1H1: mass on current patch 0.525, previous 0.253; on patch starts 0.135 (random boundaries 0.245)
+  L1H2: mass on current patch 0.627, previous 0.253; on patch starts 0.239 (random boundaries 0.245)
+  L1H3: mass on current patch 0.743, previous 0.192; on patch starts 0.366 (random boundaries 0.245)
+  fixed pattern in patch coords, layer 0, entropy patches  : gain kept 0.410 (acc 0.2625)
+  fixed pattern in patch coords, layer 0, random boundaries: gain kept 0.419 (acc 0.2666)
+  fixed pattern in patch coords, layer 1, entropy patches  : gain kept 0.763 (acc 0.3503)
+  fixed pattern in patch coords, layer 1, random boundaries: gain kept 0.743 (acc 0.3431)
+  fixed pattern in patch coords, both   , entropy patches  : gain kept 0.441 (acc 0.2738)
+  fixed pattern in patch coords, both   , random boundaries: gain kept 0.421 (acc 0.2656)
+
+== average patch 6.0 bytes: theta 4.35 bits, measured 6.01 bytes/patch; boundaries at a space 0.02, after a space 0.91
+  L0H0: mass on current patch 0.793, previous 0.194; on patch starts 0.174 (random boundaries 0.189)
+  L0H1: mass on current patch 0.920, previous 0.072; on patch starts 0.203 (random boundaries 0.184)
+  L0H2: mass on current patch 0.859, previous 0.133; on patch starts 0.219 (random boundaries 0.189)
+  L0H3: mass on current patch 0.758, previous 0.235; on patch starts 0.190 (random boundaries 0.194)
+  L1H0: mass on current patch 0.534, previous 0.350; on patch starts 0.162 (random boundaries 0.198)
+  L1H1: mass on current patch 0.586, previous 0.247; on patch starts 0.100 (random boundaries 0.193)
+  L1H2: mass on current patch 0.688, previous 0.238; on patch starts 0.185 (random boundaries 0.192)
+  L1H3: mass on current patch 0.805, previous 0.157; on patch starts 0.291 (random boundaries 0.190)
+  fixed pattern in patch coords, layer 0, entropy patches  : gain kept 0.391 (acc 0.2595)
+  fixed pattern in patch coords, layer 0, random boundaries: gain kept 0.391 (acc 0.2639)
+  fixed pattern in patch coords, layer 1, entropy patches  : gain kept 0.760 (acc 0.3498)
+  fixed pattern in patch coords, layer 1, random boundaries: gain kept 0.739 (acc 0.3429)
+  fixed pattern in patch coords, both   , entropy patches  : gain kept 0.418 (acc 0.2715)
+  fixed pattern in patch coords, both   , random boundaries: gain kept 0.395 (acc 0.2624)
+  fixed pattern in BYTE coords (reference), layer 0: gain kept 0.485
+  fixed pattern in BYTE coords (reference), layer 1: gain kept 0.752
+  fixed pattern in BYTE coords (reference), both: gain kept 0.463
+done 363s
